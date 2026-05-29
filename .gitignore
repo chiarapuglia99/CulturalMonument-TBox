@@ -1,1 +1,4 @@
 .key_ollama
+__pycache__/
+*.pyc
+*.pyo
