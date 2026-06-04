@@ -16,6 +16,30 @@ from .llm import (check_ollama, enrich_with_llm, apply_llm_enrichments,
                   ask_llm_review_low_confidence, apply_llm_review)
 from .metrics import validate_with_reasoner
 from .report import print_report
+from .architetture_fixed import main as _fix_labels_main
+from .extract_description import main as _extract_desc_main
+
+
+def run_fix_labels(input_path: str, output_path: str | None = None) -> str:
+    """Sostituisce i label generici degli individui con i valori reali delle proprietà.
+
+    Restituisce il percorso del file prodotto.
+    """
+    out = output_path or input_path
+    print(f"\n[post] Fix labels: {input_path} -> {out}")
+    _fix_labels_main(input_path, out)
+    return out
+
+
+def run_extract_descriptions(input_path: str, output_path: str | None = None) -> str:
+    """Classifica le AccessCondition via LLM e aggiorna i loro rdfs:label.
+
+    Restituisce il percorso del file prodotto.
+    """
+    out = output_path or input_path
+    print(f"\n[post] Extract descriptions: {input_path} -> {out}")
+    _extract_desc_main(input_path, out)
+    return out
 
 
 def main():
@@ -53,6 +77,10 @@ def main():
     pr.add_argument("--dc-date",         default=None)
     pr.add_argument("--dc-description",  default=None)
     pr.add_argument("--no-report",       action="store_true")
+    pr.add_argument("--fix-labels",      action="store_true",
+                    help="Esegui architetture_fixed.py sull'output (sostituisce label generici)")
+    pr.add_argument("--extract-desc",    action="store_true",
+                    help="Esegui extract_description.py sull'output (classifica AccessCondition via LLM)")
     args = pr.parse_args()
 
     merge = args.merge and not args.no_merge
@@ -177,6 +205,12 @@ def main():
             print(f"         • {c}")
     else:
         print(f"      ⚠️  Validazione non disponibile: {result.get('error', '?')}")
+
+    # Post-processing opzionale
+    if args.fix_labels:
+        run_fix_labels(output)
+    if args.extract_desc:
+        run_extract_descriptions(output)
 
 
 if __name__ == "__main__":
