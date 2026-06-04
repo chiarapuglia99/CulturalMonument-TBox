@@ -9,7 +9,7 @@ Approccio deterministico (nessun LLM): per ogni classe si sa quale proprietà
 contiene il valore da promuovere a rdfs:label.
 """
 import sys
-from rdflib import Graph, Literal, RDFS, URIRef
+from rdflib import Graph, Literal, RDFS, URIRef, XSD
 from rdflib.namespace import Namespace
 
 GEO = Namespace("http://www.opengis.net/ont/geosparql#")
@@ -29,6 +29,10 @@ TYPE_TO_VALUE_PROP = {
     NS3.Email:           NS3.emailAddress,
     NS6.AccessCondition: NS5.description,
 }
+
+# Proprietà il cui valore URIRef deve essere convertito in xsd:anyURI literal
+# per coerenza con la dichiarazione DatatypeProperty nel TBox.
+CONVERT_TO_ANYURI = {NS3.URL}
 
 def clean(v):
     """Pulisce literal con virgolette annidate tipo \"\"testo\"\"."""
@@ -51,6 +55,10 @@ def main(inp, outp):
             for old in list(g.objects(ind, RDFS.label)):
                 g.remove((ind, RDFS.label, old))
             g.add((ind, RDFS.label, Literal(clean(val))))
+            # Converti URI → xsd:anyURI literal per le proprietà in CONVERT_TO_ANYURI
+            if prop in CONVERT_TO_ANYURI and isinstance(val, URIRef):
+                g.remove((ind, prop, val))
+                g.add((ind, prop, Literal(str(val), datatype=XSD.anyURI)))
             changed += 1
 
     # 2) OnlineContactPoint ("Recapiti"): nessun literal proprio.

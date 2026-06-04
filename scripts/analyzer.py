@@ -2,9 +2,9 @@
 
 from collections import defaultdict
 
-from rdflib import RDF, URIRef, Literal
+from rdflib import RDF, RDFS, OWL, XSD, URIRef, Literal
 
-from .constants import SKIP_PROPS, META_CLASSES, TAU_SUB, TAU_SIM
+from .constants import SKIP_PROPS, META_CLASSES, TAU_SUB, TAU_SIM, FORCE_DATATYPE_PROPS
 from .utils import local_name, xsd_of, cosine_sim, HAS_SBERT
 
 
@@ -30,12 +30,19 @@ def analyze_abox(g) -> dict:
             data_props[p]["domains"].update(sc)
             data_props[p]["values_per_subject"].append((s, o))
         elif isinstance(o, URIRef):
-            oc = ind_cls.get(o, set())
-            obj_props[p]["domains"].update(sc)
-            obj_props[p]["ranges"].update(oc)
-            obj_props[p]["pairs"].add((s, o))
-            obj_props[p]["values_per_subject"][s].add(o)
-            obj_props[p]["subjects_per_value"][o].add(s)
+            if str(p) in FORCE_DATATYPE_PROPS:
+                # URI semanticamente è un letterale (es. SM/URL): forza DatatypeProperty
+                data_props[p]["ranges"].add(XSD.anyURI)
+                data_props[p]["domains"].update(sc)
+                data_props[p]["values_per_subject"].append(
+                    (s, Literal(str(o), datatype=XSD.anyURI)))
+            else:
+                oc = ind_cls.get(o, set())
+                obj_props[p]["domains"].update(sc)
+                obj_props[p]["ranges"].update(oc)
+                obj_props[p]["pairs"].add((s, o))
+                obj_props[p]["values_per_subject"][s].add(o)
+                obj_props[p]["subjects_per_value"][o].add(s)
 
     cls_insts = defaultdict(set)
     for ind, cs in ind_cls.items():

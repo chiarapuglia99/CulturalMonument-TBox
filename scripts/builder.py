@@ -6,7 +6,7 @@ from collections import defaultdict
 from rdflib import Graph, RDF, RDFS, OWL, XSD, URIRef, Literal, BNode
 
 from .constants import (DC, KNOWN_PREFIXES, SKIP_PROPS, META_CLASSES,
-                        TAU_DOM, TBOX_PREDICATES, TBOX_TYPES)
+                        TAU_DOM, TBOX_PREDICATES, TBOX_TYPES, PROVENANCE_PROPS)
 from .utils import local_name
 
 
@@ -537,6 +537,9 @@ def strip_tbox_from_abox(abox: Graph, tbox: Graph, equiv_map: dict = None) -> Gr
 
     for s, p, o in abox:
         p_str, o_str = str(p), str(o)
+
+        if p_str in PROVENANCE_PROPS:
+            continue
 
         if p_str == str(RDF.type) and o_str in TBOX_TYPES:
             continue
