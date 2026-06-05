@@ -1,0 +1,52 @@
+{
+  "_comment": "Configurazione post-processing pipeline ABox→TBox. Rimuovere o lasciare vuoto per usare l'auto-rilevamento.",
+
+  "flatten": [
+    {
+      "via":   "https://w3id.org/italia/onto/SM/hasOnlineContactPoint",
+      "class": "https://w3id.org/italia/onto/SM/OnlineContactPoint",
+      "sub_properties": [
+        "https://w3id.org/italia/onto/SM/hasEmail",
+        "https://w3id.org/italia/onto/SM/hasTelephoneNumber",
+        "https://w3id.org/italia/onto/SM/hasWebSite"
+      ]
+    }
+  ],
+
+  "fix_labels": {
+    "https://w3id.org/italia/onto/CLV/Geometry": {
+      "property": "http://www.opengis.net/ont/geosparql#asWKT"
+    },
+    "https://w3id.org/italia/onto/CLV/Address": {
+      "property": "https://w3id.org/italia/onto/CLV/fullAddress"
+    },
+    "https://w3id.org/italia/onto/SM/WebSite": {
+      "property": "https://w3id.org/italia/onto/SM/URL",
+      "convert_to_anyuri": true
+    },
+    "https://w3id.org/italia/onto/SM/Telephone": {
+      "property": "https://w3id.org/italia/onto/SM/telephoneNumber"
+    },
+    "https://w3id.org/italia/onto/SM/Email": {
+      "property": "https://w3id.org/italia/onto/SM/emailAddress"
+    }
+  },
+
+  "class_labels": {
+    "https://w3id.org/italia/onto/POI/PointOfInterest": {"it": "Punto di Interesse", "en": "Point of Interest"},
+    "https://schema.org/BookStore":                      {"it": "Libreria",           "en": "Book Store"}
+  },
+
+  "extract_desc": {
+    "class":             "https://w3id.org/italia/onto/AccessCondition/AccessCondition",
+    "property":          "https://w3id.org/italia/onto/l0/description",
+    "name_property":     "https://w3id.org/italia/onto/l0/name",
+    "relation_property": "https://w3id.org/italia/onto/AccessCondition/hasAccessCondition",
+    "allowed_values": [
+      "Totalmente accessibile",
+      "Parzialmente accessibile",
+      "Non accessibile",
+      "Informazioni non disponibili"
+    ]
+  }
+}

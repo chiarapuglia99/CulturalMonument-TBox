@@ -62,17 +62,30 @@ def validate_with_reasoner(tbox_path: str) -> dict:
         g.serialize(destination=tmp_xml.name, format="xml")
         tmp_xml.close()
 
+        import logging
+        logging.getLogger("owlready2").setLevel(logging.CRITICAL)
+
         onto = get_ontology("http://temp.example.org/tbox")
         with open(tmp_xml.name, "rb") as f:
             onto.load(fileobj=f)
 
         with onto:
             try:
-                sync_reasoner_pellet(infer_property_values=True,
-                                     infer_data_property_values=False)
-                consistent = True
-            except owlready2.base.OwlReadyInconsistentOntologyError:
-                consistent = False
+                import sys, io
+                _null = io.StringIO()
+                _old_stdout, _old_stderr = sys.stdout, sys.stderr
+                sys.stdout = sys.stderr = _null
+                try:
+                    sync_reasoner_pellet(infer_property_values=True,
+                                         infer_data_property_values=False)
+                    consistent = True
+                except owlready2.base.OwlReadyInconsistentOntologyError:
+                    consistent = False
+                finally:
+                    sys.stdout, sys.stderr = _old_stdout, _old_stderr
+            except Exception:
+                sys.stdout, sys.stderr = _old_stdout, _old_stderr
+                raise
 
         result = {
             "consistent": consistent,

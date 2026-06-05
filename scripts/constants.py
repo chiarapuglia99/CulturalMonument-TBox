@@ -29,6 +29,7 @@ KNOWN_PREFIXES = {
 # Proprietà di sola provenienza: escluse dall'analisi TBox E dall'output merged
 PROVENANCE_PROPS = {
     "http://purl.org/dc/terms/isPartOf",
+    "https://w3id.org/italia/onto/CLV/hasCity",   # URI città senza rdf:type → evita individui orfani sotto owl:Thing
 }
 
 SKIP_PROPS = {

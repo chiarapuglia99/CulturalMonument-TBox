@@ -391,19 +391,38 @@ def build_tbox(analysis: dict, src: Graph, dc_meta: dict) -> Graph:
         if prop in non_simple:
             continue
 
+        # Usa cardinalità qualificata (owl:onClass) se la proprietà ha un range
+        # specifico già dichiarato nel TBox — evita "max N owl:Thing" in Protégé.
+        declared_range = tbox.value(prop, RDFS.range)
+        use_qualified = (isinstance(declared_range, URIRef)
+                         and declared_range != OWL.Thing)
+
         node = BNode()
         tbox.add((node, RDF.type, OWL.Restriction))
         tbox.add((node, OWL.onProperty, prop))
-        if "exact" in entry and entry["exact"] > 0:
-            tbox.add((node, OWL.cardinality,
-                      Literal(entry["exact"], datatype=XSD.nonNegativeInteger)))
+        if use_qualified:
+            tbox.add((node, OWL.onClass, declared_range))
+            if "exact" in entry and entry["exact"] > 0:
+                tbox.add((node, OWL.qualifiedCardinality,
+                          Literal(entry["exact"], datatype=XSD.nonNegativeInteger)))
+            else:
+                if entry["min"] > 0:
+                    tbox.add((node, OWL.minQualifiedCardinality,
+                              Literal(entry["min"], datatype=XSD.nonNegativeInteger)))
+                if entry["max"] < 999:
+                    tbox.add((node, OWL.maxQualifiedCardinality,
+                              Literal(entry["max"], datatype=XSD.nonNegativeInteger)))
         else:
-            if entry["min"] > 0:
-                tbox.add((node, OWL.minCardinality,
-                          Literal(entry["min"], datatype=XSD.nonNegativeInteger)))
-            if entry["max"] < 999:
-                tbox.add((node, OWL.maxCardinality,
-                          Literal(entry["max"], datatype=XSD.nonNegativeInteger)))
+            if "exact" in entry and entry["exact"] > 0:
+                tbox.add((node, OWL.cardinality,
+                          Literal(entry["exact"], datatype=XSD.nonNegativeInteger)))
+            else:
+                if entry["min"] > 0:
+                    tbox.add((node, OWL.minCardinality,
+                              Literal(entry["min"], datatype=XSD.nonNegativeInteger)))
+                if entry["max"] < 999:
+                    tbox.add((node, OWL.maxCardinality,
+                              Literal(entry["max"], datatype=XSD.nonNegativeInteger)))
         tbox.add((cls, RDFS.subClassOf, node))
 
     removed = deduplicate_restrictions(tbox)

@@ -18,6 +18,8 @@ from .metrics import validate_with_reasoner
 from .report import print_report
 from .architetture_fixed import main as _fix_labels_main
 from .extract_description import main as _extract_desc_main
+from .dedup_individuals import main as _dedup_main
+from .flatten_nodes import main as _flatten_main
 
 
 def run_fix_labels(input_path: str, output_path: str | None = None) -> str:
@@ -39,6 +41,22 @@ def run_extract_descriptions(input_path: str, output_path: str | None = None) ->
     out = output_path or input_path
     print(f"\n[post] Extract descriptions: {input_path} -> {out}")
     _extract_desc_main(input_path, out)
+    return out
+
+
+def run_dedup(input_path: str, output_path: str | None = None) -> str:
+    """Rimuove individui duplicati (stessa classe + stessi valori chiave)."""
+    out = output_path or input_path
+    print(f"\n[post] Deduplicazione individui: {input_path} -> {out}")
+    _dedup_main(input_path, out)
+    return out
+
+
+def run_flatten(input_path: str, output_path: str | None = None) -> str:
+    """Appiattisce nodi intermedi secondo le regole in postprocess_config.json."""
+    out = output_path or input_path
+    print(f"\n[post] Appiattimento nodi: {input_path} -> {out}")
+    _flatten_main(input_path, out)
     return out
 
 
@@ -81,6 +99,10 @@ def main():
                     help="Esegui architetture_fixed.py sull'output (sostituisce label generici)")
     pr.add_argument("--extract-desc",    action="store_true",
                     help="Esegui extract_description.py sull'output (classifica AccessCondition via LLM)")
+    pr.add_argument("--dedup",           action="store_true",
+                    help="Rimuovi individui duplicati (stessa classe + stessi valori chiave)")
+    pr.add_argument("--flatten",         action="store_true",
+                    help="Appiattisci nodi intermedi secondo postprocess_config.json")
     args = pr.parse_args()
 
     merge = args.merge and not args.no_merge
@@ -206,7 +228,11 @@ def main():
     else:
         print(f"      ⚠️  Validazione non disponibile: {result.get('error', '?')}")
 
-    # Post-processing opzionale
+    # Post-processing opzionale — ordine: flatten → dedup → fix-labels → extract-desc
+    if args.flatten:
+        run_flatten(output)
+    if args.dedup:
+        run_dedup(output)
     if args.fix_labels:
         run_fix_labels(output)
     if args.extract_desc:
