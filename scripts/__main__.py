@@ -20,6 +20,7 @@ from .architetture_fixed import main as _fix_labels_main
 from .extract_description import main as _extract_desc_main
 from .dedup_individuals import main as _dedup_main
 from .flatten_nodes import main as _flatten_main
+from .merge_site import main as _merge_site_main
 
 
 def run_fix_labels(input_path: str, output_path: str | None = None) -> str:
@@ -57,6 +58,14 @@ def run_flatten(input_path: str, output_path: str | None = None) -> str:
     out = output_path or input_path
     print(f"\n[post] Appiattimento nodi: {input_path} -> {out}")
     _flatten_main(input_path, out)
+    return out
+
+
+def run_merge_site(input_path: str, output_path: str | None = None) -> str:
+    """Unisce cis:Site in cis:CulturalInstituteOrSite aggiungendo cis:haIndirizzo."""
+    out = output_path or input_path
+    print(f"\n[post] Merge Site → CulturalInstituteOrSite: {input_path} -> {out}")
+    _merge_site_main(input_path, out)
     return out
 
 
@@ -103,6 +112,10 @@ def main():
                     help="Rimuovi individui duplicati (stessa classe + stessi valori chiave)")
     pr.add_argument("--flatten",         action="store_true",
                     help="Appiattisci nodi intermedi secondo postprocess_config.json")
+    pr.add_argument("--merge-site",      action="store_true",
+                    help="Unisci cis:Site in cis:CulturalInstituteOrSite e aggiungi cis:haIndirizzo")
+    pr.add_argument("--no-merge-site",   action="store_true",
+                    help="Salta l'unione cis:Site → cis:CulturalInstituteOrSite")
     args = pr.parse_args()
 
     merge = args.merge and not args.no_merge
@@ -228,7 +241,7 @@ def main():
     else:
         print(f"      ⚠️  Validazione non disponibile: {result.get('error', '?')}")
 
-    # Post-processing opzionale — ordine: flatten → dedup → fix-labels → extract-desc
+    # Post-processing opzionale — ordine: flatten → dedup → fix-labels → extract-desc → merge-site
     if args.flatten:
         run_flatten(output)
     if args.dedup:
@@ -237,6 +250,8 @@ def main():
         run_fix_labels(output)
     if args.extract_desc:
         run_extract_descriptions(output)
+    if args.merge_site and not args.no_merge_site:
+        run_merge_site(output)
 
 
 if __name__ == "__main__":

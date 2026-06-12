@@ -18,7 +18,6 @@ Variabili d'ambiente:
 """
 
 import sys, os, json, argparse, urllib.request, urllib.error
-from collections import defaultdict
 from pathlib import Path
 from rdflib import Graph, Namespace, RDF, RDFS, Literal, URIRef
 
@@ -126,14 +125,12 @@ def _auto_detect(g):
 
 # ── Entry point ─────────────────────────────────────────────────
 
-def main(inp, outp, target_class=None, text_prop=None, allowed_values=None,
-         name_prop=None):
+def main(inp, outp, target_class=None, text_prop=None, allowed_values=None):
     g = Graph()
     g.parse(inp, format="turtle")
     print(f"[host: {OLLAMA_HOST} | modello: {OLLAMA_MODEL}]")
 
     # Risolvi parametri: CLI > config (solo se la classe esiste nel grafo) > auto
-    relation_prop = None
     if target_class is None or text_prop is None:
         cfg = _load_config(inp)
         if cfg:
@@ -144,10 +141,6 @@ def main(inp, outp, target_class=None, text_prop=None, allowed_values=None,
                 target_class   = target_class   or cfg_cls
                 text_prop      = text_prop      or cfg_prop
                 allowed_values = allowed_values or cfg.get("allowed_values")
-                name_prop      = name_prop      or (URIRef(cfg["name_property"])
-                                                    if "name_property" in cfg else None)
-                relation_prop  = (URIRef(cfg["relation_property"])
-                                  if "relation_property" in cfg else None)
 
     if target_class is None or text_prop is None:
         print("[extract_desc] Nessuna classe configurata per questo file — skip.")
@@ -156,51 +149,64 @@ def main(inp, outp, target_class=None, text_prop=None, allowed_values=None,
         return
 
     key = _load_key()
-    n = 0
 
+    # Passo 1: classifica ogni individuo tramite LLM
+    classification = {}  # URIRef -> str classificazione
     for s in list(g.subjects(RDF.type, target_class)):
         if not isinstance(s, URIRef):
             continue
         texts = list(g.objects(s, text_prop))
         if not texts:
             continue
-
         prompt = _build_prompt(str(texts[0]), allowed_values)
         try:
             result = _call_llm(prompt, key).strip().strip('"').strip("'")
         except RuntimeError as e:
             print(e, file=sys.stderr)
             sys.exit(1)
-
-        # Risale all'entità padre tramite relation_prop (es. hasAccessCondition)
-        parent_name = None
-        if relation_prop:
-            for parent in g.subjects(relation_prop, s):
-                # Prova name_prop sull'entità padre, poi rdfs:label
-                if name_prop:
-                    vals = list(g.objects(parent, name_prop))
-                    if vals:
-                        parent_name = str(vals[0]).strip()
-                        break
-                lbls = list(g.objects(parent, RDFS.label))
-                if lbls:
-                    parent_name = str(lbls[0]).strip()
-                    break
-
-        # Label finale: "Nome Monumento - Classificazione"
-        final_label = f"{parent_name} - {result}" if parent_name else result
-        print(f"  {final_label}")
-
-        for lbl in list(g.objects(s, RDFS.label)):
-            g.remove((s, RDFS.label, lbl))
-        g.add((s, RDFS.label, Literal(final_label)))
-        n += 1
+        classification[s] = result
+        print(f"  {s.split('/')[-1]} → {result}")
 
     cls_name = str(target_class).rsplit("/", 1)[-1].rsplit("#", 1)[-1]
-    if n == 0:
+    if not classification:
         print(f"[extract_desc] Nessun individuo '{cls_name}' trovato nel file — step saltato.")
         return
-    print(f"Aggiornate {n} {cls_name} -> {outp}")
+
+    # Passo 2: raggruppa per valore di classificazione
+    groups: dict[str, list] = {}
+    for ind, val in classification.items():
+        groups.setdefault(val, []).append(ind)
+
+    # Passo 3: per ogni gruppo mantieni un canonico con label pulita;
+    #          copia le descrizioni dei duplicati sul canonico, poi rimuovili
+    for cls_val, individuals in groups.items():
+        canonical = individuals[0]
+
+        for lbl in list(g.objects(canonical, RDFS.label)):
+            g.remove((canonical, RDFS.label, lbl))
+        g.add((canonical, RDFS.label, Literal(cls_val)))
+
+        existing_descs = {str(o) for o in g.objects(canonical, text_prop)}
+
+        for dup in individuals[1:]:
+            # Copia le descrizioni uniche del duplicato sul canonico
+            for desc in g.objects(dup, text_prop):
+                if str(desc) not in existing_descs:
+                    g.add((canonical, text_prop, desc))
+                    existing_descs.add(str(desc))
+
+            # Redirige relazioni in ingresso (es. hasAccessCondition) al canonico
+            for subj, pred in list(g.subject_predicates(dup)):
+                g.remove((subj, pred, dup))
+                g.add((subj, pred, canonical))
+
+            # Rimuove tutti i triple con il duplicato come soggetto
+            for pred, obj in list(g.predicate_objects(dup)):
+                g.remove((dup, pred, obj))
+
+        print(f"  '{cls_val}': {len(individuals)} individui → canonico {canonical.split('/')[-1]}")
+
+    print(f"Classificati {len(classification)} '{cls_name}' → {len(groups)} unici → {outp}")
     g.serialize(destination=outp, format="turtle")
 
 

@@ -51,6 +51,7 @@ def validate_with_reasoner(tbox_path: str) -> dict:
     try:
         from owlready2 import get_ontology, sync_reasoner_pellet
         import owlready2
+        owlready2.JAVA_EXE = r"C:\Program Files\Java\jdk-26.0.1\bin\java.exe"
         import tempfile, os
         from rdflib import Graph as RGraph
 

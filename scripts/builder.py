@@ -137,6 +137,31 @@ def deduplicate_domains(domains: set, equiv_map: dict) -> set:
     return result
 
 
+_RESTRICTION_CONSTRAINT_PROPS = {
+    OWL.someValuesFrom, OWL.allValuesFrom, OWL.hasValue,
+    OWL.cardinality, OWL.minCardinality, OWL.maxCardinality,
+    OWL.qualifiedCardinality, OWL.minQualifiedCardinality, OWL.maxQualifiedCardinality,
+}
+
+
+def _remove_malformed_restrictions(tbox: Graph) -> int:
+    """Rimuove blank-node owl:Restriction privi di onProperty o senza alcun vincolo."""
+    removed = 0
+    for bnode in list(tbox.subjects(RDF.type, OWL.Restriction)):
+        has_prop = tbox.value(bnode, OWL.onProperty) is not None
+        has_constraint = any(
+            tbox.value(bnode, cp) is not None
+            for cp in _RESTRICTION_CONSTRAINT_PROPS
+        )
+        if not has_prop or not has_constraint:
+            for cls in list(tbox.subjects(RDFS.subClassOf, bnode)):
+                tbox.remove((cls, RDFS.subClassOf, bnode))
+            for p, o in list(tbox.predicate_objects(bnode)):
+                tbox.remove((bnode, p, o))
+            removed += 1
+    return removed
+
+
 def deduplicate_restrictions(tbox: Graph):
     fingerprint_to_bnodes = defaultdict(list)
     for bnode in list(tbox.subjects(RDF.type, OWL.Restriction)):
@@ -144,9 +169,15 @@ def deduplicate_restrictions(tbox: Graph):
         card  = tbox.value(bnode, OWL.cardinality)
         minc  = tbox.value(bnode, OWL.minCardinality)
         maxc  = tbox.value(bnode, OWL.maxCardinality)
+        qcard = tbox.value(bnode, OWL.qualifiedCardinality)
+        minqc = tbox.value(bnode, OWL.minQualifiedCardinality)
+        maxqc = tbox.value(bnode, OWL.maxQualifiedCardinality)
         some  = tbox.value(bnode, OWL.someValuesFrom)
         allv  = tbox.value(bnode, OWL.allValuesFrom)
-        fp = (str(prop), str(card), str(minc), str(maxc), str(some), str(allv))
+        oncls = tbox.value(bnode, OWL.onClass)
+        fp = (str(prop), str(card), str(minc), str(maxc),
+              str(qcard), str(minqc), str(maxqc),
+              str(some), str(allv), str(oncls))
         fingerprint_to_bnodes[fp].append(bnode)
 
     removed = 0
@@ -400,34 +431,45 @@ def build_tbox(analysis: dict, src: Graph, dc_meta: dict) -> Graph:
         node = BNode()
         tbox.add((node, RDF.type, OWL.Restriction))
         tbox.add((node, OWL.onProperty, prop))
+        has_constraint = False
         if use_qualified:
             tbox.add((node, OWL.onClass, declared_range))
             if "exact" in entry and entry["exact"] > 0:
                 tbox.add((node, OWL.qualifiedCardinality,
                           Literal(entry["exact"], datatype=XSD.nonNegativeInteger)))
+                has_constraint = True
             else:
                 if entry["min"] > 0:
                     tbox.add((node, OWL.minQualifiedCardinality,
                               Literal(entry["min"], datatype=XSD.nonNegativeInteger)))
+                    has_constraint = True
                 if entry["max"] < 999:
                     tbox.add((node, OWL.maxQualifiedCardinality,
                               Literal(entry["max"], datatype=XSD.nonNegativeInteger)))
+                    has_constraint = True
         else:
             if "exact" in entry and entry["exact"] > 0:
                 tbox.add((node, OWL.cardinality,
                           Literal(entry["exact"], datatype=XSD.nonNegativeInteger)))
+                has_constraint = True
             else:
                 if entry["min"] > 0:
                     tbox.add((node, OWL.minCardinality,
                               Literal(entry["min"], datatype=XSD.nonNegativeInteger)))
+                    has_constraint = True
                 if entry["max"] < 999:
                     tbox.add((node, OWL.maxCardinality,
                               Literal(entry["max"], datatype=XSD.nonNegativeInteger)))
-        tbox.add((cls, RDFS.subClassOf, node))
+                    has_constraint = True
+        if has_constraint:
+            tbox.add((cls, RDFS.subClassOf, node))
 
     removed = deduplicate_restrictions(tbox)
     if removed:
         print(f"      ✂️  {removed} restriction duplicate rimosse")
+    malformed = _remove_malformed_restrictions(tbox)
+    if malformed:
+        print(f"      🗑️  {malformed} restriction malformate rimosse (Error* in Protege)")
 
     return tbox
 
