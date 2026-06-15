@@ -20,7 +20,7 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 # ── Flag di default ─────────────────────────────────────────────
-DEFAULT_FLAGS = ["--merge", "--flatten", "--dedup", "--fix-labels", "--extract-desc", "--merge-site", "--no-report"]
+DEFAULT_FLAGS = ["--merge", "--flatten", "--dedup", "--fix-labels", "--extract-desc", "--merge-site", "--refine", "--no-report"]
 LLM_MODEL     = "gemma4:31b-cloud"
 OLLAMA_URL    = "http://localhost:11434"
 

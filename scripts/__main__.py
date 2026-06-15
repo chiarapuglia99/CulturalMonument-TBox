@@ -21,6 +21,7 @@ from .extract_description import main as _extract_desc_main
 from .dedup_individuals import main as _dedup_main
 from .flatten_nodes import main as _flatten_main
 from .merge_site import main as _merge_site_main
+from .refine import main as _refine_main
 
 
 def run_fix_labels(input_path: str, output_path: str | None = None) -> str:
@@ -66,6 +67,18 @@ def run_merge_site(input_path: str, output_path: str | None = None) -> str:
     out = output_path or input_path
     print(f"\n[post] Merge Site → CulturalInstituteOrSite: {input_path} -> {out}")
     _merge_site_main(input_path, out)
+    return out
+
+
+def run_refine(input_path: str, output_path: str | None = None,
+               onto_iri: str = "https://w3id.org/firenze/architetture") -> str:
+    """Rifinitura ontologica finale (tassonomia, contatti, inversi, IRI, ...).
+
+    Generale per qualsiasi TTL dello schema CIS/CLV/SM/AC. Restituisce il percorso prodotto.
+    """
+    out = output_path or input_path
+    print(f"\n[post] Refine ontologia: {input_path} -> {out}")
+    _refine_main(input_path, out, onto_iri)
     return out
 
 
@@ -116,6 +129,13 @@ def main():
                     help="Unisci cis:Site in cis:CulturalInstituteOrSite e aggiungi cis:haIndirizzo")
     pr.add_argument("--no-merge-site",   action="store_true",
                     help="Salta l'unione cis:Site → cis:CulturalInstituteOrSite")
+    pr.add_argument("--refine",          action="store_true",
+                    help="Rifinitura ontologica finale: tassonomia, contatti (afi:Contact), "
+                         "appiattimento geometria, condizioni di accesso, inversi, IRI ontologia")
+    pr.add_argument("--no-refine",       action="store_true",
+                    help="Salta la rifinitura finale")
+    pr.add_argument("--onto-iri",        default="https://w3id.org/firenze/architetture",
+                    help="IRI dell'ontologia (default: https://w3id.org/firenze/architetture)")
     args = pr.parse_args()
 
     merge = args.merge and not args.no_merge
@@ -252,6 +272,16 @@ def main():
         run_extract_descriptions(output)
     if args.merge_site and not args.no_merge_site:
         run_merge_site(output)
+    if args.refine and not args.no_refine:
+        run_refine(output, onto_iri=args.onto_iri)
+        print("\n[+] Validazione finale (post-refine)...")
+        res = validate_with_reasoner(str(Path(output).resolve()))
+        if res.get("consistent") is True:
+            print("      ✅ Ontologia rifinita consistente")
+        elif res.get("consistent") is False:
+            print("      ❌ INCONSISTENTE dopo refine:", res.get("inconsistent_classes", []))
+        else:
+            print(f"      ⚠️  Validazione non disponibile: {res.get('error', '?')}")
 
 
 if __name__ == "__main__":
