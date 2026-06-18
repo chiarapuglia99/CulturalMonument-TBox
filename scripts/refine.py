@@ -256,6 +256,24 @@ def compact_main_class(g):
     return n
 
 
+def union_of(g, members):
+    """Crea (e restituisce) un nodo classe anonimo owl:unionOf dei membri dati.
+
+    Serve per esprimere un dominio/range che è l'unione di più classi: in RDFS
+    due rdfs:domain sullo stesso predicato significano INTERSEZIONE (il soggetto
+    dovrebbe appartenere a tutte), quindi per un'unione corretta (consistente con
+    HermiT) si usa una classe anonima owl:unionOf.
+    """
+    union = BNode()
+    g.add((union, RDF.type, OWL.Class))
+    cells = [BNode() for _ in members]
+    for i, member in enumerate(members):
+        g.add((cells[i], RDF.first, member))
+        g.add((cells[i], RDF.rest, cells[i + 1] if i + 1 < len(cells) else RDF.nil))
+    g.add((union, OWL.unionOf, cells[0]))
+    return union
+
+
 def restructure_contacts(g):
     """afi:Contact padre; il sito web 'ha contatti' email/telefono; coppia inversa."""
     if not (list(g.subjects(RDF.type, SM.WebSite)) or
@@ -272,13 +290,18 @@ def restructure_contacts(g):
         g.add((sub, RDFS.subClassOf, AFI.Contact))
     # coppia inversa generica: "ha contatti" / "è contatto di" (range/dominio: la classe Contatto).
     # Il sito web NON ha una relazione propria: si raggiunge come Contatto tramite "ha contatti".
+    # Il soggetto di "ha contatti" è un Istituto culturale OPPURE un Sito web (un WebSite è
+    # esso stesso un Contatto che a sua volta contiene email/telefono): dominio = unione delle due.
+    holder = union_of(g, [MAIN_CLASS, SM.WebSite])
     g.add((AFI.haContatti, RDF.type, OWL.ObjectProperty))
     g.add((AFI.haContatti, RDFS.label, Literal("ha contatti", lang="it")))
+    g.add((AFI.haContatti, RDFS.domain, holder))
     g.add((AFI.haContatti, RDFS.range, AFI.Contact))
     g.add((AFI.haContatti, OWL.inverseOf, AFI.eContattoDi))
     g.add((AFI.eContattoDi, RDF.type, OWL.ObjectProperty))
     g.add((AFI.eContattoDi, RDFS.label, Literal("è contatto di", lang="it")))
     g.add((AFI.eContattoDi, RDFS.domain, AFI.Contact))
+    g.add((AFI.eContattoDi, RDFS.range, union_of(g, [MAIN_CLASS, SM.WebSite])))
     n = 0
     for m in list(g.subjects(RDF.type, MAIN_CLASS)):
         web = g.value(m, SM.hasWebSite)

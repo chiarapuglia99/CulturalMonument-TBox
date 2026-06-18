@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architetture di Firenze</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sigma@3.0.3/dist/sigma.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/graphology-library@0.8.0/dist/graphology-library.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="header-bar">
+    <a href="/" class="home-link" title="Torna alla home">🏛 Architetture di Firenze</a>
+  </div>
+  <p>Esplora i monumenti e gli istituti culturali della città di Firenze.</p>
+  <nav class="tabs">
+    <button class="tab-button active" data-view="monuments">Seleziona Monumento</button>
+    <button class="tab-button" data-view="graph">Grafico dell'Ontologia</button>
+  </nav>
+</header>
+
+<main>
+  <section id="view-monuments" class="view">
+    <section class="picker">
+      <label for="monument-select">Scegli un monumento o istituto culturale</label>
+      <select id="monument-select">
+        <option value="">— seleziona —</option>
+      </select>
+    </section>
+
+    <section id="monument-panel" class="monument-panel hidden">
+      <h2 id="m-name"></h2>
+      <p id="m-description" class="description"></p>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Contatti</h3>
+          <div id="m-contacts"></div>
+        </div>
+
+        <div class="card">
+          <h3>Posizione</h3>
+          <p id="m-address"></p>
+          <iframe id="m-map" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        </div>
+
+        <div class="card">
+          <h3>Accessibilità</h3>
+          <div id="m-access"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Galleria fotografica</h3>
+        <p class="hint">Immagini recuperate dinamicamente da Wikimedia Commons in base al nome del monumento.</p>
+        <div id="m-gallery" class="gallery"></div>
+      </div>
+
+      <div class="card">
+        <h3>Grafo del monumento (popolamento)</h3>
+        <p class="hint">Gli individui collegati a questo monumento nell'ontologia (indirizzo, coordinate, contatti, accessibilità). Trascina i nodi per riorganizzarli.</p>
+        <div id="m-graph" class="onto-graph monument-graph"></div>
+      </div>
+    </section>
+  </section>
+
+  <section id="view-graph" class="view hidden">
+    <div class="card">
+      <h3>Grafico dell'ontologia</h3>
+      <p class="hint">Classi e relazioni principali dell'ontologia. Scorri per zoomare, trascina per spostare la vista.</p>
+      <div id="onto-graph" class="onto-graph"></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="lightbox">
+  <img id="lightbox-img" alt="">
+  <button id="lightbox-close">×</button>
+</dialog>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
