@@ -10,6 +10,9 @@
 <script src="https://cdn.jsdelivr.net/npm/graphology-library@0.8.0/dist/graphology-library.min.js"></script>
 </head>
 <body>
+<div id="bg-slideshow" aria-hidden="true"></div>
+<div id="bg-overlay" aria-hidden="true"></div>
+
 <header>
   <div class="header-bar">
     <a href="/" class="home-link" title="Torna alla home">🏛 Architetture di Firenze</a>
@@ -18,6 +21,8 @@
   <nav class="tabs">
     <button class="tab-button active" data-view="monuments">Seleziona Monumento</button>
     <button class="tab-button" data-view="graph">Grafico dell'Ontologia</button>
+    <button class="tab-button" data-view="stats">Statistiche</button>
+    <button class="tab-button" data-view="construct">Aggiungi Monumento</button>
   </nav>
 </header>
 
@@ -35,34 +40,44 @@
       <p id="m-description" class="description"></p>
 
       <div class="grid">
-        <div class="card">
-          <h3>Contatti</h3>
-          <div id="m-contacts"></div>
-        </div>
+        <details class="card card-collapsible" open>
+          <summary><h3>Contatti</h3></summary>
+          <div class="card-body">
+            <div id="m-contacts"></div>
+          </div>
+        </details>
 
-        <div class="card">
-          <h3>Posizione</h3>
-          <p id="m-address"></p>
-          <iframe id="m-map" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
-        </div>
+        <details class="card card-collapsible">
+          <summary><h3>Posizione</h3></summary>
+          <div class="card-body">
+            <p id="m-address"></p>
+            <iframe id="m-map" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+          </div>
+        </details>
 
-        <div class="card">
-          <h3>Accessibilità</h3>
-          <div id="m-access"></div>
-        </div>
+        <details class="card card-collapsible">
+          <summary><h3>Accessibilità</h3></summary>
+          <div class="card-body">
+            <div id="m-access"></div>
+          </div>
+        </details>
       </div>
 
-      <div class="card">
-        <h3>Galleria fotografica</h3>
-        <p class="hint">Immagini recuperate dinamicamente da Wikimedia Commons in base al nome del monumento.</p>
-        <div id="m-gallery" class="gallery"></div>
-      </div>
+      <details class="card card-collapsible" id="gallery-details">
+        <summary><h3>Galleria fotografica</h3></summary>
+        <div class="card-body">
+          <p class="hint">Immagini recuperate dinamicamente da Wikimedia Commons in base al nome del monumento.</p>
+          <div id="m-gallery" class="gallery"></div>
+        </div>
+      </details>
 
-      <div class="card">
-        <h3>Grafo del monumento (popolamento)</h3>
-        <p class="hint">Gli individui collegati a questo monumento nell'ontologia (indirizzo, coordinate, contatti, accessibilità). Trascina i nodi per riorganizzarli.</p>
-        <div id="m-graph" class="onto-graph monument-graph"></div>
-      </div>
+      <details class="card card-collapsible" id="graph-details">
+        <summary><h3>Grafo del monumento (popolamento)</h3></summary>
+        <div class="card-body">
+          <p class="hint">Gli individui collegati a questo monumento nell'ontologia (indirizzo, coordinate, contatti, accessibilità). Trascina i nodi per riorganizzarli.</p>
+          <div id="m-graph" class="onto-graph monument-graph"></div>
+        </div>
+      </details>
     </section>
   </section>
 
@@ -71,6 +86,82 @@
       <h3>Grafico dell'ontologia</h3>
       <p class="hint">Classi e relazioni principali dell'ontologia. Scorri per zoomare, trascina per spostare la vista.</p>
       <div id="onto-graph" class="onto-graph"></div>
+    </div>
+  </section>
+
+  <section id="view-stats" class="view hidden">
+    <div class="card">
+      <h3>Statistiche di accessibilità</h3>
+      <p class="hint">
+        Numero di monumenti per condizione di accessibilità. I monumenti privi di condizione
+        dichiarata sono raccolti in "Nessuna informazione".
+      </p>
+      <div id="stats-chart" class="stats-chart"></div>
+    </div>
+  </section>
+
+  <section id="view-construct" class="view hidden">
+    <div class="card">
+      <h3>Aggiungi un nuovo monumento</h3>
+      <p class="hint">
+        Nome, coordinate geografiche, indirizzo e sito web sono obbligatori.
+        Telefono, email e condizione di accesso sono opzionali.
+      </p>
+
+      <form id="add-monument-form" class="add-form">
+        <div class="form-field">
+          <label for="am-name">Nome del monumento *</label>
+          <input type="text" id="am-name" name="name" required maxlength="200">
+        </div>
+
+        <div class="form-row">
+          <div class="form-field">
+            <label for="am-lat">Latitudine *</label>
+            <input type="number" id="am-lat" name="lat" step="any" min="-90" max="90" required placeholder="es. 43.7696">
+          </div>
+          <div class="form-field">
+            <label for="am-lon">Longitudine *</label>
+            <input type="number" id="am-lon" name="lon" step="any" min="-180" max="180" required placeholder="es. 11.2558">
+          </div>
+        </div>
+
+        <div class="form-field">
+          <label for="am-address">Indirizzo *</label>
+          <input type="text" id="am-address" name="address" required maxlength="300" placeholder="es. Piazza della Signoria, Firenze">
+        </div>
+
+        <div class="form-field">
+          <label for="am-website">Sito web *</label>
+          <input type="url" id="am-website" name="website" required placeholder="https://...">
+        </div>
+
+        <div class="form-row">
+          <div class="form-field">
+            <label for="am-telephone">Telefono (opzionale)</label>
+            <input type="text" id="am-telephone" name="telephone" maxlength="40">
+          </div>
+          <div class="form-field">
+            <label for="am-email">Email (opzionale)</label>
+            <input type="email" id="am-email" name="email" maxlength="200">
+          </div>
+        </div>
+
+        <div class="form-field">
+          <label for="am-access">Condizione di accesso (opzionale)</label>
+          <select id="am-access" name="accessCondition">
+            <option value="">— nessuna —</option>
+            <option value="totalmente-accessibile">Totalmente accessibile</option>
+            <option value="parzialmente-accessibile">Parzialmente accessibile</option>
+            <option value="non-accessibile">Non accessibile</option>
+          </select>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Aggiungi monumento</button>
+        </div>
+
+        <p id="am-feedback" class="form-feedback hidden"></p>
+      </form>
     </div>
   </section>
 </main>

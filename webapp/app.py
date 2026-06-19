@@ -1,14 +1,21 @@
 import re
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
-from flask import Flask, abort, jsonify, render_template
-from rdflib import Graph, Namespace, URIRef
+from flask import Flask, abort, jsonify, render_template, request
+from rdflib import Graph, Literal, Namespace, URIRef
 from rdflib.collection import Collection
-from rdflib.namespace import OWL, RDF, RDFS
+from rdflib.namespace import OWL, RDF, RDFS, XSD
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TTL_PATH = BASE_DIR / "architetture_firenze_fixed.ttl"
+# I monumenti aggiunti da "Aggiungi Monumento" vengono salvati qui, separati
+# dal TTL curato originale: evita di riserializzare (e quindi riformattare)
+# il file principale ad ogni inserimento.
+ADDITIONS_PATH = BASE_DIR / "architetture_firenze_additions.ttl"
 
 AFI = Namespace("https://w3id.org/firenze/architetture/")
 CIS = Namespace("http://dati.beniculturali.it/cis/")
@@ -20,6 +27,12 @@ SM = Namespace("https://w3id.org/italia/onto/SM/")
 AC = Namespace("https://w3id.org/italia/onto/AccessCondition/")
 
 INSTITUTE_BASE = "https://linkedopendata.comune.fi.it/data/cultural-institute/"
+# Namespace dei dati per i monumenti aggiunti dal form "Aggiungi Monumento":
+# deliberatamente diverso da linkedopendata.comune.fi.it (il registro
+# open-data ufficiale), per non far passare dati inseriti dagli utenti come
+# ID ufficiali del comune.
+ADDED_DATA_BASE = "https://w3id.org/firenze/architetture/data/"
+ADDED_INSTITUTE_BASE = f"{ADDED_DATA_BASE}cultural-institute/"
 COMMONS_HEADERS = {
     "User-Agent": "ArchitettureFirenzeWebApp/1.0 (educational project; contact: example@example.com)"
 }
@@ -43,6 +56,16 @@ app = Flask(__name__)
 
 graph = Graph()
 graph.parse(TTL_PATH, format="turtle")
+
+# Grafo separato che accumula solo i monumenti aggiunti a runtime: viene
+# unito al grafo principale (così è subito interrogabile come tutto il
+# resto) e ri-serializzato per intero ad ogni inserimento, per persistere
+# le aggiunte tra un riavvio e l'altro senza toccare il TTL curato.
+additions_graph = Graph()
+if ADDITIONS_PATH.exists():
+    additions_graph.parse(ADDITIONS_PATH, format="turtle")
+    for triple in additions_graph:
+        graph.add(triple)
 
 
 MOJIBAKE_MARKERS = ("Ã", "â€", "Â")
@@ -105,6 +128,17 @@ def require_valid_id(inst_id: str) -> None:
         abort(404)
 
 
+def resolve_institute_uri(inst_id: str) -> str:
+    """Risolve l'id di un monumento al suo URI completo, cercandolo prima nel
+    namespace ufficiale (linkedopendata) e poi in quello dei monumenti aggiunti
+    dal form. Va in 404 se non esiste in nessuno dei due."""
+    for base in (INSTITUTE_BASE, ADDED_INSTITUTE_BASE):
+        uri = URIRef(f"{base}{inst_id}")
+        if (uri, RDF.type, CIS.CulturalInstituteOrSite) in graph:
+            return str(uri)
+    abort(404)
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -126,10 +160,33 @@ def list_monuments():
     return jsonify(results)
 
 
+@app.route("/api/stats")
+def accessibility_stats():
+    """Conteggio dei monumenti per condizione di accessibilità.
+    Query SPARQL di aggregazione (GROUP BY + COUNT): l'OPTIONAL include anche i
+    monumenti senza condizione dichiarata, che COALESCE etichetta come
+    'Nessuna informazione' (assenza != falsità, Open World Assumption).
+    """
+    query = PREFIXES + """
+    SELECT ?stato (COUNT(DISTINCT ?inst) AS ?numero) WHERE {
+        ?inst a cis:CulturalInstituteOrSite .
+        OPTIONAL { ?inst ac:hasAccessCondition ?ac . ?ac rdfs:label ?lbl . }
+        BIND(COALESCE(STR(?lbl), "Nessuna informazione") AS ?stato)
+    }
+    GROUP BY ?stato
+    ORDER BY DESC(?numero)
+    """
+    stats = [
+        {"label": fix_mojibake(str(row.stato)), "count": int(row.numero)}
+        for row in graph.query(query)
+    ]
+    return jsonify({"total": sum(s["count"] for s in stats), "stats": stats})
+
+
 @app.route("/api/monuments/<inst_id>")
 def monument_detail(inst_id):
     require_valid_id(inst_id)
-    inst_uri = f"{INSTITUTE_BASE}{inst_id}"
+    inst_uri = resolve_institute_uri(inst_id)
 
     detail_query = PREFIXES + f"""
     SELECT ?name ?description ?accessibilityNote ?fullAddress ?wkt ?accessLabel ?accessDesc WHERE {{
@@ -212,7 +269,7 @@ def monument_detail(inst_id):
 @app.route("/api/monuments/<inst_id>/photos")
 def monument_photos(inst_id):
     require_valid_id(inst_id)
-    inst_uri = f"{INSTITUTE_BASE}{inst_id}"
+    inst_uri = resolve_institute_uri(inst_id)
 
     name_query = PREFIXES + f"""
     SELECT ?name WHERE {{
@@ -271,9 +328,7 @@ def short_label(text, limit=42):
 @app.route("/api/monuments/<inst_id>/graph")
 def monument_graph(inst_id):
     require_valid_id(inst_id)
-    inst_uri = URIRef(f"{INSTITUTE_BASE}{inst_id}")
-    if (inst_uri, RDF.type, CIS.CulturalInstituteOrSite) not in graph:
-        abort(404)
+    inst_uri = URIRef(resolve_institute_uri(inst_id))
 
     nodes = {}
     edges = []
@@ -364,6 +419,56 @@ def fetch_commons_photos(query: str, limit: int = 8):
         return photos
     except requests.RequestException:
         return []
+
+
+# Monumenti più iconici di Firenze usati per lo sfondo dinamico della home.
+# Nomi scelti tra quelli presenti in l0:name nel TTL (così i link restano
+# coerenti con l'ontologia), privilegiando i soggetti più fotografati.
+BACKGROUND_MONUMENT_NAMES = [
+    "Gli Uffizi",
+    "Ponte Vecchio",
+    "Piazza del Duomo",
+    "Piazza della Signoria",
+    "Palazzo Vecchio",
+    "Piazzale Michelangiolo",
+    "Piazza di Santa Croce",
+    "Piazza di Santa Maria Novella",
+]
+
+_background_photos_cache = None
+
+
+def _load_background_photos():
+    # Le chiamate a Wikimedia Commons sono indipendenti: eseguirle in parallelo
+    # riduce il tempo totale da ~1.5s*N (sequenziale) a ~1.5s (il più lento).
+    with ThreadPoolExecutor(max_workers=len(BACKGROUND_MONUMENT_NAMES)) as pool:
+        results = pool.map(lambda name: fetch_commons_photos(name, limit=1), BACKGROUND_MONUMENT_NAMES)
+    return [found[0] for found in results if found]
+
+
+@app.route("/api/background-photos")
+def background_photos():
+    """Una foto per ciascuno dei monumenti più iconici, per lo sfondo della home.
+    Cache in-memory di processo: i risultati di Wikimedia Commons non cambiano
+    a runtime, niente senso richiamarli ad ogni caricamento di pagina. Viene
+    già pre-caricata in background all'avvio (vedi sotto); qui si ricalcola
+    solo se quel prefetch non fosse ancora terminato.
+    Se un fallimento di rete transitorio lascia la cache vuota, NON viene
+    considerata definitiva: si ritenta alla richiesta successiva invece di
+    restare vuota per sempre fino al riavvio del processo.
+    """
+    global _background_photos_cache
+    if not _background_photos_cache:
+        _background_photos_cache = _load_background_photos()
+    return jsonify({"photos": _background_photos_cache})
+
+
+def _prefetch_background_photos():
+    global _background_photos_cache
+    _background_photos_cache = _load_background_photos()
+
+
+threading.Thread(target=_prefetch_background_photos, daemon=True).start()
 
 
 def resolve_class_targets(term):
@@ -465,6 +570,141 @@ def ontology_graph():
         nodes.setdefault(node_id, {"id": node_id, "label": short_id(node_id)})
 
     return jsonify({"nodes": list(nodes.values()), "edges": edges})
+
+
+# Query CONSTRUCT per inserire un nuovo monumento. Le triple del template sono
+# tutte condizionali sulle variabili passate via initBindings: una variabile
+# non vincolata (es. ?telContact quando l'utente non fornisce un telefono) fa
+# semplicemente omettere quella tripla dall'output, per semantica SPARQL
+# standard — non serve costruire dinamicamente il testo della query, e i
+# valori utente non vengono mai interpolati come testo (niente SPARQL
+# injection: initBindings li passa come termini RDF già tipizzati).
+ADD_MONUMENT_CONSTRUCT = PREFIXES + """
+CONSTRUCT {
+    ?inst a cis:CulturalInstituteOrSite, owl:NamedIndividual ;
+        l0:name ?name ;
+        rdfs:label ?name ;
+        afi:haCoordinate ?geom ;
+        afi:hasAddress ?addr ;
+        afi:haContatti ?website ;
+        afi:haContatti ?telContact ;
+        afi:haContatti ?emailContact ;
+        ac:hasAccessCondition ?access .
+
+    ?geom a afi:Geometria, owl:NamedIndividual ;
+        rdfs:label ?wkt ;
+        geo:asWKT ?wkt ;
+        afi:eCoordinataDi ?inst .
+
+    ?addr a clv:Address, owl:NamedIndividual ;
+        rdfs:label ?address ;
+        clv:fullAddress ?address ;
+        afi:isAddressOf ?inst .
+
+    ?website a sm:WebSite, owl:NamedIndividual ;
+        rdfs:label ?url ;
+        sm:URL ?url ;
+        afi:eContattoDi ?inst .
+
+    ?telContact a sm:Telephone, owl:NamedIndividual ;
+        rdfs:label ?telephone ;
+        sm:telephoneNumber ?telephone ;
+        afi:eContattoDi ?inst .
+
+    ?emailContact a sm:Email, owl:NamedIndividual ;
+        rdfs:label ?email ;
+        sm:emailAddress ?email ;
+        afi:eContattoDi ?inst .
+}
+WHERE {}
+"""
+
+# URI delle 3 condizioni di accesso già esistenti nel TTL: il form propone
+# queste categorie condivise (coerente con come il resto dei dati è
+# modellato) invece di crearne una nuova per ogni monumento.
+ACCESS_CONDITION_URIS = {
+    "non-accessibile": URIRef("https://linkedopendata.comune.fi.it/data/access-condition/non-accessibile"),
+    "parzialmente-accessibile": URIRef("https://linkedopendata.comune.fi.it/data/access-condition/parzialmente-accessibile"),
+    "totalmente-accessibile": URIRef("https://linkedopendata.comune.fi.it/data/access-condition/totalmente-accessibile"),
+}
+
+
+def _save_additions():
+    for pfx, ns in [("afi", AFI), ("cis", CIS), ("clv", CLV), ("sm", SM),
+                    ("ac", AC), ("l0", L0), ("geo", GEO), ("rdfs", RDFS), ("owl", OWL)]:
+        additions_graph.bind(pfx, ns, replace=True)
+    additions_graph.serialize(destination=ADDITIONS_PATH, format="turtle")
+
+
+@app.route("/api/monuments", methods=["POST"])
+def add_monument():
+    """Inserisce un nuovo monumento eseguendo la query CONSTRUCT sopra e
+    unendo le triple risultanti al grafo (in memoria e su file). Obbligatori:
+    nome, coordinate, indirizzo, almeno un sito web. Opzionali: telefono,
+    email, condizione di accesso.
+    """
+    payload = request.get_json(silent=True) or {}
+
+    name = (payload.get("name") or "").strip()
+    address = (payload.get("address") or "").strip()
+    website = (payload.get("website") or "").strip()
+    email = (payload.get("email") or "").strip()
+    telephone = (payload.get("telephone") or "").strip()
+    access_key = payload.get("accessCondition") or None
+
+    errors = {}
+    if not name:
+        errors["name"] = "Il nome del monumento è obbligatorio."
+    if not address:
+        errors["address"] = "L'indirizzo è obbligatorio."
+    if not website:
+        errors["website"] = "Il sito web è obbligatorio come contatto."
+    elif not re.match(r"^https?://", website):
+        errors["website"] = "Il sito web deve iniziare con http:// o https://."
+
+    lat = lon = None
+    try:
+        lat = float(payload.get("lat"))
+        lon = float(payload.get("lon"))
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            errors["coordinates"] = "Coordinate fuori dal range valido."
+    except (TypeError, ValueError):
+        errors["coordinates"] = "Latitudine e longitudine sono obbligatorie e devono essere numeri."
+
+    if access_key and access_key not in ACCESS_CONDITION_URIS:
+        errors["accessCondition"] = "Condizione di accesso non valida."
+
+    if errors:
+        return jsonify({"errors": errors}), 400
+
+    new_id = uuid.uuid4().hex[:10]
+    bindings = {
+        "inst": URIRef(f"{ADDED_DATA_BASE}cultural-institute/{new_id}"),
+        "name": Literal(name, lang="it"),
+        "geom": URIRef(f"{ADDED_DATA_BASE}geometry/{new_id}"),
+        "wkt": Literal(f"POINT ({lon} {lat})"),
+        "addr": URIRef(f"{ADDED_DATA_BASE}address/{new_id}"),
+        "address": Literal(address),
+        "website": URIRef(f"{ADDED_DATA_BASE}web-site/{new_id}"),
+        "url": Literal(website, datatype=XSD.anyURI),
+    }
+    if telephone:
+        bindings["telContact"] = URIRef(f"{ADDED_DATA_BASE}telephone/{new_id}")
+        bindings["telephone"] = Literal(telephone)
+    if email:
+        bindings["emailContact"] = URIRef(f"{ADDED_DATA_BASE}email/{new_id}")
+        bindings["email"] = Literal(email)
+    if access_key:
+        bindings["access"] = ACCESS_CONDITION_URIS[access_key]
+
+    constructed = graph.query(ADD_MONUMENT_CONSTRUCT, initBindings=bindings).graph
+
+    for triple in constructed:
+        graph.add(triple)
+        additions_graph.add(triple)
+    _save_additions()
+
+    return jsonify({"id": new_id, "name": name}), 201
 
 
 if __name__ == "__main__":
