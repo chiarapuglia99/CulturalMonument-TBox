@@ -1,6 +1,6 @@
+import math
 import re
 import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -8,7 +8,7 @@ import requests
 from flask import Flask, abort, jsonify, render_template, request
 from rdflib import Graph, Literal, Namespace, URIRef
 from rdflib.collection import Collection
-from rdflib.namespace import OWL, RDF, RDFS, XSD
+from rdflib.namespace import OWL, RDF, RDFS
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TTL_PATH = BASE_DIR / "architetture_firenze_fixed.ttl"
@@ -121,6 +121,25 @@ def fix_mojibake(text):
 
 def short_id(uri: str) -> str:
     return uri.rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1]
+
+
+def parse_wkt_point(wkt: str):
+    """Estrae (lon, lat) da un letterale WKT 'POINT(lon lat)'. None se non valido."""
+    match = WKT_RE.search(wkt)
+    if not match:
+        return None
+    return float(match.group(1)), float(match.group(2))
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Distanza in linea d'aria (great-circle) in chilometri tra due punti
+    espressi in gradi decimali, con la formula dell'emisenoverso."""
+    radius = 6371.0  # raggio medio terrestre in km
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
+    return 2 * radius * math.asin(math.sqrt(a))
 
 
 def require_valid_id(inst_id: str) -> None:
@@ -264,6 +283,57 @@ def monument_detail(inst_id):
             "phones": sorted(set(phones)),
         },
     })
+
+
+@app.route("/api/monuments/<inst_id>/nearby")
+def monument_nearby(inst_id):
+    """I 5 monumenti più vicini (distanza in linea d'aria) a quello dato.
+
+    La SELECT recupera nome e coordinate (geo:asWKT) di tutti i monumenti
+    georeferenziati; la distanza great-circle si calcola poi in Python con la
+    formula dell'emisenoverso (haversine), che SPARQL puro non offre senza le
+    estensioni GeoSPARQL. Si escludono il monumento stesso e quelli privi di
+    coordinate, si ordina per distanza crescente e si restituiscono i primi 5.
+    """
+    require_valid_id(inst_id)
+    inst_uri = resolve_institute_uri(inst_id)
+
+    coords_query = PREFIXES + """
+    SELECT ?inst ?name ?wkt WHERE {
+        ?inst a cis:CulturalInstituteOrSite ;
+              l0:name ?name ;
+              afi:haCoordinate ?geom .
+        ?geom geo:asWKT ?wkt .
+    }
+    """
+    points = {}
+    for row in graph.query(coords_query):
+        coord = parse_wkt_point(str(row.wkt))
+        if coord is None:
+            continue
+        lon, lat = coord
+        points[str(row.inst)] = {
+            "id": short_id(str(row.inst)),
+            "name": fix_mojibake(str(row.name)),
+            "lat": lat,
+            "lon": lon,
+        }
+
+    origin = points.get(inst_uri)
+    if origin is None:
+        # Il monumento selezionato non ha coordinate: niente con cui calcolare
+        # le distanze. Lista vuota, non un errore.
+        return jsonify({"nearby": []})
+
+    nearby = []
+    for uri, p in points.items():
+        if uri == inst_uri:
+            continue
+        distance = haversine_km(origin["lat"], origin["lon"], p["lat"], p["lon"])
+        nearby.append({"id": p["id"], "name": p["name"], "distanceKm": round(distance, 2)})
+
+    nearby.sort(key=lambda m: m["distanceKm"])
+    return jsonify({"nearby": nearby[:5]})
 
 
 @app.route("/api/monuments/<inst_id>/photos")
@@ -572,61 +642,43 @@ def ontology_graph():
     return jsonify({"nodes": list(nodes.values()), "edges": edges})
 
 
-# Query CONSTRUCT per inserire un nuovo monumento. Le triple del template sono
-# tutte condizionali sulle variabili passate via initBindings: una variabile
-# non vincolata (es. ?telContact quando l'utente non fornisce un telefono) fa
-# semplicemente omettere quella tripla dall'output, per semantica SPARQL
-# standard — non serve costruire dinamicamente il testo della query, e i
-# valori utente non vengono mai interpolati come testo (niente SPARQL
-# injection: initBindings li passa come termini RDF già tipizzati).
-ADD_MONUMENT_CONSTRUCT = PREFIXES + """
+# Etichette italiane (rdfs:label) delle 3 condizioni di accesso già presenti
+# nel TTL: il form propone queste categorie condivise (coerente con come il
+# resto dei dati è modellato). La query CONSTRUCT sotto usa questa etichetta
+# come chiave di ricerca nel grafo (FILTER su rdfs:label), così l'URI della
+# condizione di accesso è trovato per pattern matching e non hardcoded qui.
+ACCESS_CONDITION_LABELS = {
+    "non-accessibile": "Non accessibile",
+    "parzialmente-accessibile": "Parzialmente accessibile",
+    "totalmente-accessibile": "Totalmente accessibile",
+}
+
+# Query CONSTRUCT che produce l'unica tripla mancante: il collegamento tra il
+# monumento e la condizione di accesso scelta. Coerente con la teoria del
+# corso, il WHERE è un vero graph pattern, non un template vuoto:
+#  • FILTER NOT EXISTS realizza l'idea della sez. 7.40 (Mondo Aperto vs Chiuso):
+#    si interroga *esplicitamente* l'assenza del dato — un monumento senza
+#    ac:hasAccessCondition — perché nel Web Semantico l'assenza di una tripla
+#    non è di per sé "falso", va cercata di proposito. Se il monumento ha già
+#    una condizione la CONSTRUCT non genera nulla: non si sovrascrive mai un
+#    dato esistente.
+#  • ?access viene *trovata* nel grafo per pattern matching sulla sua
+#    rdfs:label (FILTER su confronto di letterali), invece di costruirne l'URI
+#    a mano in Python.
+# ?inst e ?accessKeyword arrivano via initBindings come termini RDF già
+# tipizzati (niente interpolazione di stringhe -> niente SPARQL injection).
+SET_ACCESS_CONSTRUCT = PREFIXES + """
 CONSTRUCT {
-    ?inst a cis:CulturalInstituteOrSite, owl:NamedIndividual ;
-        l0:name ?name ;
-        rdfs:label ?name ;
-        afi:haCoordinate ?geom ;
-        afi:hasAddress ?addr ;
-        afi:haContatti ?website ;
-        afi:haContatti ?telContact ;
-        afi:haContatti ?emailContact ;
-        ac:hasAccessCondition ?access .
-
-    ?geom a afi:Geometria, owl:NamedIndividual ;
-        rdfs:label ?wkt ;
-        geo:asWKT ?wkt ;
-        afi:eCoordinataDi ?inst .
-
-    ?addr a clv:Address, owl:NamedIndividual ;
-        rdfs:label ?address ;
-        clv:fullAddress ?address ;
-        afi:isAddressOf ?inst .
-
-    ?website a sm:WebSite, owl:NamedIndividual ;
-        rdfs:label ?url ;
-        sm:URL ?url ;
-        afi:eContattoDi ?inst .
-
-    ?telContact a sm:Telephone, owl:NamedIndividual ;
-        rdfs:label ?telephone ;
-        sm:telephoneNumber ?telephone ;
-        afi:eContattoDi ?inst .
-
-    ?emailContact a sm:Email, owl:NamedIndividual ;
-        rdfs:label ?email ;
-        sm:emailAddress ?email ;
-        afi:eContattoDi ?inst .
+    ?inst ac:hasAccessCondition ?access .
 }
-WHERE {}
+WHERE {
+    ?inst a cis:CulturalInstituteOrSite .
+    FILTER NOT EXISTS { ?inst ac:hasAccessCondition ?existing }
+    ?access a ac:AccessCondition ;
+            rdfs:label ?accessLabel .
+    FILTER(LCASE(STR(?accessLabel)) = LCASE(STR(?accessKeyword)))
+}
 """
-
-# URI delle 3 condizioni di accesso già esistenti nel TTL: il form propone
-# queste categorie condivise (coerente con come il resto dei dati è
-# modellato) invece di crearne una nuova per ogni monumento.
-ACCESS_CONDITION_URIS = {
-    "non-accessibile": URIRef("https://linkedopendata.comune.fi.it/data/access-condition/non-accessibile"),
-    "parzialmente-accessibile": URIRef("https://linkedopendata.comune.fi.it/data/access-condition/parzialmente-accessibile"),
-    "totalmente-accessibile": URIRef("https://linkedopendata.comune.fi.it/data/access-condition/totalmente-accessibile"),
-}
 
 
 def _save_additions():
@@ -636,75 +688,65 @@ def _save_additions():
     additions_graph.serialize(destination=ADDITIONS_PATH, format="turtle")
 
 
-@app.route("/api/monuments", methods=["POST"])
-def add_monument():
-    """Inserisce un nuovo monumento eseguendo la query CONSTRUCT sopra e
-    unendo le triple risultanti al grafo (in memoria e su file). Obbligatori:
-    nome, coordinate, indirizzo, almeno un sito web. Opzionali: telefono,
-    email, condizione di accesso.
+@app.route("/api/monuments/missing-access")
+def list_monuments_missing_access():
+    """Elenco dei monumenti privi di condizione di accesso, da proporre nella
+    sezione "Modifica Accessibilità". La SELECT usa FILTER NOT EXISTS per
+    cercare di proposito l'assenza della tripla ac:hasAccessCondition: è il
+    risvolto pratico dell'Open World Assumption (l'assenza va interrogata
+    esplicitamente, non è un "falso" implicito)."""
+    query = PREFIXES + """
+    SELECT ?inst ?name WHERE {
+        ?inst a cis:CulturalInstituteOrSite ;
+              l0:name ?name .
+        FILTER NOT EXISTS { ?inst ac:hasAccessCondition ?ac }
+    }
+    ORDER BY ?name
     """
-    payload = request.get_json(silent=True) or {}
+    results = [
+        {"id": short_id(str(row.inst)), "name": fix_mojibake(str(row.name))}
+        for row in graph.query(query)
+    ]
+    return jsonify(results)
 
-    name = (payload.get("name") or "").strip()
-    address = (payload.get("address") or "").strip()
-    website = (payload.get("website") or "").strip()
-    email = (payload.get("email") or "").strip()
-    telephone = (payload.get("telephone") or "").strip()
+
+@app.route("/api/monuments/<inst_id>/access", methods=["POST"])
+def set_access_condition(inst_id):
+    """Assegna una condizione di accesso a un monumento che ne è privo,
+    eseguendo la query SET_ACCESS_CONSTRUCT e unendo la tripla risultante al
+    grafo (in memoria e su file). Se il monumento ha già una condizione la
+    query non produce triple (FILTER NOT EXISTS) e la richiesta viene
+    rifiutata: questa sezione modifica solo i dati mancanti.
+    """
+    require_valid_id(inst_id)
+    inst_uri = URIRef(resolve_institute_uri(inst_id))
+
+    payload = request.get_json(silent=True) or {}
     access_key = payload.get("accessCondition") or None
 
-    errors = {}
-    if not name:
-        errors["name"] = "Il nome del monumento è obbligatorio."
-    if not address:
-        errors["address"] = "L'indirizzo è obbligatorio."
-    if not website:
-        errors["website"] = "Il sito web è obbligatorio come contatto."
-    elif not re.match(r"^https?://", website):
-        errors["website"] = "Il sito web deve iniziare con http:// o https://."
+    if access_key not in ACCESS_CONDITION_LABELS:
+        return jsonify({"errors": {"accessCondition": "Condizione di accesso non valida."}}), 400
 
-    lat = lon = None
-    try:
-        lat = float(payload.get("lat"))
-        lon = float(payload.get("lon"))
-        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-            errors["coordinates"] = "Coordinate fuori dal range valido."
-    except (TypeError, ValueError):
-        errors["coordinates"] = "Latitudine e longitudine sono obbligatorie e devono essere numeri."
-
-    if access_key and access_key not in ACCESS_CONDITION_URIS:
-        errors["accessCondition"] = "Condizione di accesso non valida."
-
-    if errors:
-        return jsonify({"errors": errors}), 400
-
-    new_id = uuid.uuid4().hex[:10]
     bindings = {
-        "inst": URIRef(f"{ADDED_DATA_BASE}cultural-institute/{new_id}"),
-        "name": Literal(name, lang="it"),
-        "geom": URIRef(f"{ADDED_DATA_BASE}geometry/{new_id}"),
-        "wkt": Literal(f"POINT ({lon} {lat})"),
-        "addr": URIRef(f"{ADDED_DATA_BASE}address/{new_id}"),
-        "address": Literal(address),
-        "website": URIRef(f"{ADDED_DATA_BASE}web-site/{new_id}"),
-        "url": Literal(website, datatype=XSD.anyURI),
+        "inst": inst_uri,
+        # Si passa solo l'etichetta italiana, non l'URI: il WHERE della query
+        # trova ?access cercandola nel grafo per rdfs:label (pattern matching).
+        "accessKeyword": Literal(ACCESS_CONDITION_LABELS[access_key], lang="it"),
     }
-    if telephone:
-        bindings["telContact"] = URIRef(f"{ADDED_DATA_BASE}telephone/{new_id}")
-        bindings["telephone"] = Literal(telephone)
-    if email:
-        bindings["emailContact"] = URIRef(f"{ADDED_DATA_BASE}email/{new_id}")
-        bindings["email"] = Literal(email)
-    if access_key:
-        bindings["access"] = ACCESS_CONDITION_URIS[access_key]
+    constructed = graph.query(SET_ACCESS_CONSTRUCT, initBindings=bindings).graph
 
-    constructed = graph.query(ADD_MONUMENT_CONSTRUCT, initBindings=bindings).graph
+    if len(constructed) == 0:
+        # Nessuna tripla generata: il monumento ha già una condizione di
+        # accesso (la FILTER NOT EXISTS lo ha escluso). Non c'è nulla da
+        # modificare in questa sezione.
+        return jsonify({"errors": {"accessCondition": "Questo monumento ha già una condizione di accesso."}}), 409
 
     for triple in constructed:
         graph.add(triple)
         additions_graph.add(triple)
     _save_additions()
 
-    return jsonify({"id": new_id, "name": name}), 201
+    return jsonify({"id": inst_id, "accessCondition": ACCESS_CONDITION_LABELS[access_key]}), 200
 
 
 if __name__ == "__main__":

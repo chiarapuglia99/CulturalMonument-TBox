@@ -22,7 +22,7 @@
     <button class="tab-button active" data-view="monuments">Seleziona Monumento</button>
     <button class="tab-button" data-view="graph">Grafico dell'Ontologia</button>
     <button class="tab-button" data-view="stats">Statistiche</button>
-    <button class="tab-button" data-view="construct">Aggiungi Monumento</button>
+    <button class="tab-button" data-view="access">Modifica Accessibilità</button>
   </nav>
 </header>
 
@@ -78,6 +78,14 @@
           <div id="m-graph" class="onto-graph monument-graph"></div>
         </div>
       </details>
+
+      <details class="card card-collapsible" id="nearby-details" open>
+        <summary><h3>Monumenti più vicini</h3></summary>
+        <div class="card-body">
+          <p class="hint">I 5 monumenti più vicini in linea d'aria. Clicca su uno per aprirne la scheda.</p>
+          <ul id="m-nearby" class="nearby-list"></ul>
+        </div>
+      </details>
     </section>
   </section>
 
@@ -100,56 +108,29 @@
     </div>
   </section>
 
-  <section id="view-construct" class="view hidden">
+  <section id="view-access" class="view hidden">
     <div class="card">
-      <h3>Aggiungi un nuovo monumento</h3>
+      <h3>Modifica accessibilità</h3>
       <p class="hint">
-        Nome, coordinate geografiche, indirizzo e sito web sono obbligatori.
-        Telefono, email e condizione di accesso sono opzionali.
+        Solo i monumenti per cui la condizione di accesso <em>non è ancora presente</em>
+        nella base di conoscenza (interrogati con <code>FILTER NOT EXISTS</code>).
+        Scegline uno dalla casella di suggerimento, assegna una condizione e
+        il dato verrà aggiunto al grafo.
       </p>
 
-      <form id="add-monument-form" class="add-form">
+      <form id="edit-access-form" class="add-form">
         <div class="form-field">
-          <label for="am-name">Nome del monumento *</label>
-          <input type="text" id="am-name" name="name" required maxlength="200">
-        </div>
-
-        <div class="form-row">
-          <div class="form-field">
-            <label for="am-lat">Latitudine *</label>
-            <input type="number" id="am-lat" name="lat" step="any" min="-90" max="90" required placeholder="es. 43.7696">
-          </div>
-          <div class="form-field">
-            <label for="am-lon">Longitudine *</label>
-            <input type="number" id="am-lon" name="lon" step="any" min="-180" max="180" required placeholder="es. 11.2558">
-          </div>
+          <label for="ea-monument">Monumento senza condizione di accesso *</label>
+          <input type="text" id="ea-monument" name="monument" list="ea-monument-list"
+                 autocomplete="off" required placeholder="Inizia a digitare il nome…">
+          <datalist id="ea-monument-list"></datalist>
+          <p id="ea-count" class="hint"></p>
         </div>
 
         <div class="form-field">
-          <label for="am-address">Indirizzo *</label>
-          <input type="text" id="am-address" name="address" required maxlength="300" placeholder="es. Piazza della Signoria, Firenze">
-        </div>
-
-        <div class="form-field">
-          <label for="am-website">Sito web *</label>
-          <input type="url" id="am-website" name="website" required placeholder="https://...">
-        </div>
-
-        <div class="form-row">
-          <div class="form-field">
-            <label for="am-telephone">Telefono (opzionale)</label>
-            <input type="text" id="am-telephone" name="telephone" maxlength="40">
-          </div>
-          <div class="form-field">
-            <label for="am-email">Email (opzionale)</label>
-            <input type="email" id="am-email" name="email" maxlength="200">
-          </div>
-        </div>
-
-        <div class="form-field">
-          <label for="am-access">Condizione di accesso (opzionale)</label>
-          <select id="am-access" name="accessCondition">
-            <option value="">— nessuna —</option>
+          <label for="ea-access">Condizione di accesso *</label>
+          <select id="ea-access" name="accessCondition" required>
+            <option value="">— seleziona —</option>
             <option value="totalmente-accessibile">Totalmente accessibile</option>
             <option value="parzialmente-accessibile">Parzialmente accessibile</option>
             <option value="non-accessibile">Non accessibile</option>
@@ -157,10 +138,10 @@
         </div>
 
         <div class="form-actions">
-          <button type="submit" class="btn-primary">Aggiungi monumento</button>
+          <button type="submit" class="btn-primary">Salva condizione di accesso</button>
         </div>
 
-        <p id="am-feedback" class="form-feedback hidden"></p>
+        <p id="ea-feedback" class="form-feedback hidden"></p>
       </form>
     </div>
   </section>
