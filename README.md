@@ -1,4 +1,4 @@
-# CulturalMonument-TBox
+# Costruzione di una base di conoscenza a partire da un'architettura A-Box ad un'architettura T-Box
 
 Conversione automatica da **A-Box a T-Box** dei dati aperti sulle architetture e
 i monumenti del Comune di Firenze, con una **web app** per esplorare l'ontologia
