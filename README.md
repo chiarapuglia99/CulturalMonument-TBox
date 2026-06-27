@@ -30,6 +30,7 @@ modificare alcuni dati.
   - [Sezione 3 — Statistiche](#sezione-3--statistiche)
   - [Sezione 4 — Modifica Accessibilità](#sezione-4--modifica-accessibilità)
 - [Note tecniche](#note-tecniche)
+- [Contributors](#contributors)
 
 ---
 
@@ -292,3 +293,10 @@ l'ontologia principale.
 - **Validazione**: l'ontologia finale è pensata per passare il controllo di
   consistenza con un reasoner (HermiT), cosa priva di senso sul file di partenza,
   che non conteneva alcuno schema.
+
+---
+
+## Contributors
+
+- [Chiara Puglia](https://github.com/chiarapuglia99) — Master's Degree Student in Computer Science, curriculum Data Science and Machine Learning
+- [Luca Giuliano](https://github.com/Kizorat) — Master's Degree Student in Computer Science, curriculum Data Science and Machine Learning
