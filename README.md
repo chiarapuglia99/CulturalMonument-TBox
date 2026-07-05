@@ -7,9 +7,12 @@ risultante.
 Il progetto parte da un file di soli *fatti* (`architetture_firenze.ttl`, un
 export Open Data del Comune di Firenze) e ne induce automaticamente uno *schema*
 ontologico OWL (`architetture_firenze_fixed.ttl`), coerente e validabile da un
-reasoner. Sopra il file finale gira una piccola applicazione Flask che permette
-di consultare i monumenti, visualizzare l'ontologia, calcolare statistiche e
-modificare alcuni dati.
+reasoner. Sopra il file finale gira un'applicazione Flask che permette di
+consultare i monumenti, visualizzare l'ontologia, calcolare statistiche,
+modificare i dati e — soprattutto — mettere in pratica l'intero ventaglio delle
+**query SPARQL**: `SELECT` e aggregazioni per l'esplorazione, `ASK` per la
+completezza, `CONSTRUCT` per materializzare relazioni implicite e `DESCRIBE`
+remota per l'arricchimento **Linked Data** da fonti esterne (DBpedia, schema.org).
 
 ---
 
@@ -29,6 +32,10 @@ modificare alcuni dati.
   - [Sezione 2 — Grafico dell'Ontologia](#sezione-2--grafico-dellontologia)
   - [Sezione 3 — Statistiche](#sezione-3--statistiche)
   - [Sezione 4 — Modifica Accessibilità](#sezione-4--modifica-accessibilità)
+  - [Sezione 5 — Vicinanze (stessa via o piazza)](#sezione-5--vicinanze-stessa-via-o-piazza)
+  - [Sezione 6 — Completezza](#sezione-6--completezza)
+  - [Sezione 7 — Ulteriori informazioni (arricchimento via web)](#sezione-7--ulteriori-informazioni-arricchimento-via-web)
+- [Le query SPARQL in sintesi](#le-query-sparql-in-sintesi)
 - [Note tecniche](#note-tecniche)
 - [Contributors](#contributors)
 
@@ -193,17 +200,22 @@ python app.py
 # poi apri http://localhost:5000
 ```
 
-L'interfaccia è organizzata in **quattro sezioni**, raggiungibili dalle schede in
-alto. Di seguito, per ciascuna, cosa fa e cosa mostra.
+L'interfaccia è organizzata in **sette sezioni**, raggiungibili dalle schede in
+alto. Di seguito, per ciascuna, cosa fa e cosa mostra. La home ha uno **sfondo
+dinamico** che scorre le foto dei monumenti fiorentini più iconici, caricate da
+Wikimedia Commons in parallelo e messe in cache a processo (vedi
+[Note tecniche](#note-tecniche)).
 
 ---
 
 ### Sezione 1 — Seleziona Monumento
 
-Punto di partenza dell'esplorazione: si sceglie un monumento da un menu a tendina
-e si apre una scheda di dettaglio completa, costruita interrogando l'ontologia.
+Punto di partenza dell'esplorazione: si cerca un monumento in una **barra di
+ricerca con autocompletamento** (che filtra a ogni tasto l'elenco restituito da
+una `SELECT`) e si apre una scheda di dettaglio completa, costruita interrogando
+l'ontologia.
 
-La scheda raccoglie, in più riquadri:
+La scheda raccoglie, in più riquadri collassabili:
 
 - **Descrizione** del bene (`arco:description`) e dati anagrafici (`l0:name`);
 - **Contatti** — sito web, email e telefono — raggiunti seguendo la catena
@@ -277,6 +289,104 @@ l'ontologia principale.
 
 ---
 
+### Sezione 5 — Vicinanze (stessa via o piazza)
+
+Materializza una relazione **assente nei dati grezzi**: due monumenti condividono
+l'ubicazione se stanno nella stessa via o piazza. Una query **SPARQL `CONSTRUCT`**
+genera al volo le triple `afi:stessaUbicazioneDi` confrontando il *toponimo* —
+il testo prima della prima virgola di `clv:fullAddress` (es. *"Piazza del Duomo,
+50122, Firenze, Italia"* → *"piazza del duomo"*), estratto in puro SPARQL con
+`STRBEFORE` e normalizzato con `LCASE`. Un `FILTER(STR(?a) < STR(?b))` tiene una
+sola coppia per accoppiamento ed evita il self-loop.
+
+I risultati sono presentati in tre modi complementari:
+
+- **raggruppati per luogo**: ogni scheda è una via o una piazza, le pillole sono
+  i monumenti che vi si trovano (solo i toponimi condivisi da almeno due monumenti);
+- **grafo delle triple prodotte**: ogni monumento è un nodo, ogni tripla
+  `afi:stessaUbicazioneDi` un arco; i nodi sono colorati per zona, così ogni
+  via/piazza forma un *cluster* distinto;
+- **ontologia con il popolamento**: il grafo della T-Box (classi e proprietà)
+  arricchito con le sole istanze coinvolte, legate alla classe
+  `cis:CulturalInstituteOrSite` da `rdf:type` (tratteggiato) e tra loro dagli
+  archi rossi della nuova relazione — la relazione «in azione» sui dati, invece
+  che come self-loop su una classe.
+
+![Sezione Vicinanze — raggruppamento per via o piazza](screen-webapp/Vicinanze_pt.1.png)
+
+![Grafo delle triple `afi:stessaUbicazioneDi` prodotte dalla CONSTRUCT](screen-webapp/Vicinanze_pt.2.png)
+
+![Ontologia con il popolamento della nuova relazione](screen-webapp/Vicinanze_pt.3.png)
+
+---
+
+### Sezione 6 — Completezza
+
+Risponde con un **booleano** (query **SPARQL `ASK`**) alla domanda «esiste almeno
+un monumento *privo* della proprietà scelta?». Si seleziona una proprietà tra
+coordinate, indirizzo, descrizione, condizione di accesso e contatti; la `ASK`
+usa `FILTER NOT EXISTS` per **interrogare esplicitamente l'assenza** della tripla.
+
+È l'altra faccia della **Open World Assumption** vista nelle Statistiche: se la
+`ASK` è *falsa* nessun monumento manca di quella proprietà (dataset completo); se
+è *vera* almeno uno ne è privo. L'assenza di un dato non è un "falso" implicito,
+va cercata di proposito.
+
+![Sezione Completezza](screen-webapp/Completezza.png)
+
+---
+
+### Sezione 7 — Ulteriori informazioni (arricchimento via web)
+
+Porta l'esplorazione **fuori dalla base di conoscenza locale**: partendo da una
+risorsa (es. la Biblioteca Medicea Laurenziana), una query **SPARQL `DESCRIBE`**
+eseguita sull'endpoint pubblico di **DBpedia** recupera dal web le risorse
+collegate e ne costruisce un **nuovo grafo RDF**, mostrato sia come vista a
+nodi/archi sia in serializzazione Turtle.
+
+- **Risoluzione robusta della risorsa**: il monumento viene agganciato alla sua
+  risorsa DBpedia *fiorentina* per match esatto di `rdfs:label` (it/en) e, in
+  fallback, con DBpedia Lookup fuzzy sul nome ripulito; una `ASK` remota
+  (`_is_florence_related`) scarta gli omonimi non fiorentini (la Piazza San Marco
+  di Venezia, l'Aston Villa…).
+- **Classificazione schema.org**: i tipi `schema:Library`, `schema:Organization`…
+  qualificano l'entità e fanno da ponte verso le risorse che ne parlano (pagina
+  Wikipedia, sito ufficiale, immagini, categorie), con un tetto per predicato per
+  tenere il grafo leggibile.
+- **Astrazione concettuale**: il grafo non si ferma all'entità specifica ma
+  **risale ai concetti generali** che la inquadrano (una biblioteca → il concetto
+  *Library*) e da lì ai concetti *correlati* (*Book*), tenuti vicini da una
+  condizione di reciprocità dei wikilink e da un `LIMIT`.
+- **Il ponte** tra i due mondi è una tripla `owl:sameAs` tra la nostra risorsa e
+  quella di DBpedia; i nodi collegati sono cliccabili e aprono la pagina web.
+
+![Sezione Ulteriori informazioni — DESCRIBE su DBpedia](screen-webapp/UlterioriInformazioni_pt.1.png)
+
+![Grafo delle risorse collegate ricostruito dalla DESCRIBE](screen-webapp/UlterioriInformazioni_pt.2.png)
+
+---
+
+## Le query SPARQL in sintesi
+
+La web app è, di fatto, una **rassegna delle forme di interrogazione SPARQL**
+applicate all'ontologia prodotta dalla pipeline:
+
+| Forma | Dove | A cosa serve |
+|-------|------|--------------|
+| `SELECT` | Seleziona Monumento (elenco, dettaglio, contatti con `haContatti+`, foto, monumenti vicini) | Recupero ed esplorazione dei dati. |
+| `SELECT` | Grafico dell'Ontologia (classi, `rdfs:subClassOf`, object property con dominio/range) | Ricostruzione della vista T-Box: classi e relazioni. |
+| `SELECT` + `GROUP BY`/`COUNT` | Statistiche | Aggregazione per condizione di accessibilità, con `OPTIONAL` + `COALESCE` per la voce *"Nessuna informazione"*. |
+| `ASK` | Completezza | Risposta booleana: «esiste un monumento *privo* della proprietà scelta?». |
+| `ASK` (remota) | Ulteriori informazioni | Verifica che la risorsa DBpedia sia davvero fiorentina (scarta gli omonimi). |
+| `CONSTRUCT` | Modifica Accessibilità, Vicinanze | Genera triple nuove: la condizione di accesso mancante (`ac:hasAccessCondition`) e `afi:stessaUbicazioneDi`. |
+| `DESCRIBE` (remota) | Ulteriori informazioni | Arricchimento Linked Data da DBpedia (con `SELECT` remote per concetti generali/correlati). |
+| `FILTER NOT EXISTS` | Completezza, Modifica Accessibilità | Interroga *esplicitamente* l'assenza di una tripla (Open World Assumption). |
+
+Ovunque i parametri arrivano come termini RDF già tipizzati via `initBindings`
+(niente interpolazione di stringhe → niente SPARQL injection).
+
+---
+
 ## Note tecniche
 
 - **Correzione del mojibake a runtime**: il file di origine porta testi UTF-8 mal
@@ -285,11 +395,25 @@ l'ontologia principale.
   ricostruendo i byte originali e ridecodificandoli correttamente, senza alterare
   il file su disco.
 - **SPARQL ovunque**: ogni sezione della web app è alimentata da query SPARQL
-  (`SELECT`, `CONSTRUCT`, aggregazioni) sul grafo dell'ontologia — non da accessi
-  diretti a strutture dati Python.
+  (`SELECT`, aggregazioni, `ASK`, `CONSTRUCT`, `DESCRIBE`) sul grafo dell'ontologia
+  — non da accessi diretti a strutture dati Python. Il quadro completo è nella
+  tabella [Le query SPARQL in sintesi](#le-query-sparql-in-sintesi).
 - **Distanze geografiche**: SPARQL puro non offre funzioni geospaziali senza le
   estensioni GeoSPARQL, di coonseguenza la distanza tra monumenti è calcolata in Python
   (haversine) sulle coordinate estratte dai letterali `geo:asWKT`.
+- **Arricchimento Linked Data resiliente**: le chiamate a DBpedia e Wikimedia
+  Commons sono *best-effort* — su errore di rete o parsing la web app degrada
+  senza crash (grafo vuoto, lista foto vuota) invece di propagare l'eccezione.
+  La risoluzione della risorsa DBpedia combina match esatto, lookup fuzzy e una
+  `ASK` di verifica «è davvero fiorentina?» per non agganciare omonimi di altre città.
+- **Sfondo dinamico con prefetch**: le foto dei monumenti iconici della home sono
+  scaricate da Wikimedia Commons **in parallelo** (`ThreadPoolExecutor`) e messe
+  in cache di processo, con pre-caricamento in un thread all'avvio; una cache
+  vuota per un errore transitorio viene ritentata, non considerata definitiva.
+- **Aggiunte separate dal file curato**: le triple inserite a runtime (condizioni
+  di accesso) sono persistite in `architetture_firenze_additions.ttl`, così da
+  sopravvivere ai riavvii senza riserializzare (e quindi riformattare) il TTL
+  principale.
 - **Validazione**: l'ontologia finale è pensata per passare il controllo di
   consistenza con un reasoner (HermiT), cosa priva di senso sul file di partenza,
   che non conteneva alcuno schema.
