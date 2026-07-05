@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architetture di Firenze</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sigma@3.0.3/dist/sigma.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/graphology-library@0.8.0/dist/graphology-library.min.js"></script>
+</head>
+<body>
+<div id="bg-slideshow" aria-hidden="true"></div>
+<div id="bg-overlay" aria-hidden="true"></div>
+
+<header>
+  <div class="header-bar">
+    <a href="/" class="home-link" title="Torna alla home">🏛 Architetture di Firenze</a>
+  </div>
+  <p>Esplora i monumenti e gli istituti culturali della città di Firenze.</p>
+  <nav class="tabs">
+    <button class="tab-button active" data-view="monuments">Seleziona Monumento</button>
+    <button class="tab-button" data-view="graph">Grafico dell'Ontologia</button>
+    <button class="tab-button" data-view="stats">Statistiche</button>
+    <button class="tab-button" data-view="access">Modifica Accessibilità</button>
+    <button class="tab-button" data-view="nearby">Vicinanze </button>
+    <button class="tab-button" data-view="completeness">Completezza </button>
+    <button class="tab-button" data-view="describe">Ulteriori informazioni</button>
+  </nav>
+</header>
+
+<main>
+  <section id="view-monuments" class="view">
+    <section class="picker">
+      <label for="monument-input">Scegli un monumento o istituto culturale</label>
+      <div class="search-box">
+        <span class="search-icon" aria-hidden="true">🔍</span>
+        <input type="text" id="monument-input" autocomplete="off" role="combobox"
+               aria-autocomplete="list" aria-expanded="false" aria-controls="monument-suggestions"
+               placeholder="Inizia a digitare il nome…">
+        <ul id="monument-suggestions" class="suggestions hidden" role="listbox"></ul>
+      </div>
+    </section>
+
+    <section id="monument-panel" class="monument-panel hidden">
+      <h2 id="m-name"></h2>
+      <p id="m-description" class="description"></p>
+
+      <div class="grid">
+        <details class="card card-collapsible" open>
+          <summary><h3>Contatti</h3></summary>
+          <div class="card-body">
+            <div id="m-contacts"></div>
+          </div>
+        </details>
+
+        <details class="card card-collapsible">
+          <summary><h3>Posizione</h3></summary>
+          <div class="card-body">
+            <p id="m-address"></p>
+            <iframe id="m-map" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+          </div>
+        </details>
+
+        <details class="card card-collapsible">
+          <summary><h3>Accessibilità</h3></summary>
+          <div class="card-body">
+            <div id="m-access"></div>
+          </div>
+        </details>
+      </div>
+
+      <details class="card card-collapsible" id="gallery-details">
+        <summary><h3>Galleria fotografica</h3></summary>
+        <div class="card-body">
+          <p class="hint">Immagini recuperate dinamicamente da Wikimedia Commons in base al nome del monumento.</p>
+          <div id="m-gallery" class="gallery"></div>
+        </div>
+      </details>
+
+      <details class="card card-collapsible" id="graph-details">
+        <summary><h3>Grafo del monumento (popolamento)</h3></summary>
+        <div class="card-body">
+          <p class="hint">Gli individui collegati a questo monumento nell'ontologia (indirizzo, coordinate, contatti, accessibilità). Trascina i nodi per riorganizzarli.</p>
+          <div id="m-graph" class="onto-graph monument-graph"></div>
+        </div>
+      </details>
+
+      <details class="card card-collapsible" id="nearby-details" open>
+        <summary><h3>Monumenti più vicini</h3></summary>
+        <div class="card-body">
+          <p class="hint">I 5 monumenti più vicini in linea d'aria. Clicca su uno per aprirne la scheda.</p>
+          <ul id="m-nearby" class="nearby-list"></ul>
+        </div>
+      </details>
+    </section>
+  </section>
+
+  <section id="view-graph" class="view hidden">
+    <div class="card">
+      <h3>Grafico dell'ontologia</h3>
+      <p class="hint">Classi e relazioni principali dell'ontologia. Scorri per zoomare, trascina per spostare la vista.</p>
+      <div id="onto-graph" class="onto-graph"></div>
+    </div>
+  </section>
+
+  <section id="view-stats" class="view hidden">
+    <div class="card">
+      <h3>Statistiche di accessibilità</h3>
+      <p class="hint">
+        Numero di monumenti per condizione di accessibilità. I monumenti privi di condizione
+        dichiarata sono raccolti in "Nessuna informazione".
+      </p>
+      <div id="stats-chart" class="stats-chart"></div>
+    </div>
+  </section>
+
+  <section id="view-access" class="view hidden">
+    <div class="card">
+      <h3>Modifica accessibilità</h3>
+      <p class="hint">
+        Solo i monumenti per cui la condizione di accesso <em>non è ancora presente</em>
+        nella base di conoscenza (interrogati con <code>FILTER NOT EXISTS</code>).
+        Scegline uno dalla casella di suggerimento, assegna una condizione e
+        il dato verrà aggiunto al grafo.
+      </p>
+
+      <form id="edit-access-form" class="add-form">
+        <div class="form-field">
+          <label for="ea-monument">Monumento senza condizione di accesso *</label>
+          <div class="search-box">
+            <span class="search-icon" aria-hidden="true">🔍</span>
+            <input type="text" id="ea-monument" name="monument" autocomplete="off" required
+                   role="combobox" aria-autocomplete="list" aria-expanded="false"
+                   aria-controls="ea-monument-suggestions" placeholder="Inizia a digitare il nome…">
+            <ul id="ea-monument-suggestions" class="suggestions hidden" role="listbox"></ul>
+          </div>
+          <p id="ea-count" class="hint"></p>
+        </div>
+
+        <div class="form-field">
+          <label for="ea-access">Condizione di accesso *</label>
+          <select id="ea-access" name="accessCondition" required>
+            <option value="">— seleziona —</option>
+            <option value="totalmente-accessibile">Totalmente accessibile</option>
+            <option value="parzialmente-accessibile">Parzialmente accessibile</option>
+            <option value="non-accessibile">Non accessibile</option>
+          </select>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Salva condizione di accesso</button>
+        </div>
+
+        <p id="ea-feedback" class="form-feedback hidden"></p>
+      </form>
+    </div>
+  </section>
+
+  <section id="view-nearby" class="view hidden">
+    <div class="card">
+      <h3>Stessa via o piazza</h3>
+      <p class="hint">
+        Una query <code>CONSTRUCT</code> genera nuove triple
+        <code>afi:stessaUbicazioneDi</code> tra i monumenti che condividono lo stesso
+        <em>toponimo</em> (la via o la piazza), estratto da <code>clv:fullAddress</code>
+        direttamente nella query con <code>STRBEFORE</code>. I monumenti vengono poi
+        raggruppati per luogo: ogni scheda è una via o una piazza, le pillole sono i
+        monumenti che vi si trovano (clicca per aprirne la scheda).
+      </p>
+
+      <div class="form-actions">
+        <button id="sl-run" class="btn-primary">Raggruppa per via o piazza</button>
+      </div>
+
+      <p id="sl-summary" class="hint"></p>
+      <div id="sl-groups" class="location-groups"></div>
+
+      <details class="card card-collapsible" id="sl-graph-details">
+        <summary><h3>Grafo delle triple prodotte</h3></summary>
+        <div class="card-body">
+          <p class="hint">
+            Le triple <code>afi:stessaUbicazioneDi</code> generate dalla
+            <code>CONSTRUCT</code>: ogni monumento è un nodo, ogni arco collega due
+            monumenti dello stesso luogo. I nodi sono colorati per via/piazza, così
+            ogni gruppo forma un cluster distinto. Trascina i nodi per riorganizzarli.
+          </p>
+          <div id="sl-graph" class="onto-graph monument-graph"></div>
+        </div>
+      </details>
+
+      <details class="card card-collapsible" id="sl-onto-details">
+        <summary><h3>L'ontologia con il popolamento della nuova relazione</h3></summary>
+        <div class="card-body">
+          <p class="hint">
+            Il grafo dell'ontologia di base (le <strong>classi</strong> e le proprietà)
+            arricchito col <strong>popolamento</strong> della sola relazione
+            <code>afi:stessaUbicazioneDi</code>: i monumenti realmente collegati (le
+            <strong>istanze</strong>, colorate per <strong>zona</strong> secondo la legenda)
+            sono legati alla classe <em>CulturalInstituteOrSite</em> da <code>rdf:type</code>
+            (tratteggiato) e tra loro dagli archi <strong style="color:#c62828">rossi</strong>
+            della nuova relazione. Trascina i nodi per riorganizzarli.
+          </p>
+          <div id="sl-onto-graph" class="onto-graph"></div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section id="view-completeness" class="view hidden">
+    <div class="card">
+      <h3>Verifica di completezza </h3>
+      <p class="hint">
+        Una query <code>ASK</code> risponde <strong>vero/falso</strong> alla domanda
+        «esiste almeno un monumento <em>privo</em> della proprietà scelta?»
+        (<code>FILTER NOT EXISTS</code>). Se la risposta è <em>falso</em>, tutti i
+        monumenti possiedono quella proprietà.
+      </p>
+
+      <form id="completeness-form" class="add-form">
+        <div class="form-field">
+          <label for="cp-property">Proprietà da verificare *</label>
+          <select id="cp-property" name="property" required>
+            <option value="coordinate">Coordinate geografiche</option>
+            <option value="indirizzo">Indirizzo</option>
+            <option value="descrizione">Descrizione</option>
+            <option value="accessibilita">Condizione di accesso</option>
+            <option value="contatti">Contatti</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Esegui ASK</button>
+        </div>
+      </form>
+
+      <div id="cp-result" class="ask-result hidden"></div>
+    </div>
+  </section>
+
+  <section id="view-describe" class="view hidden">
+    <div class="card">
+      <h3>Arricchimento via web</h3>
+      <p class="hint">
+        Partendo da una risorsa della nostra base di conoscenza, una query
+        <code>DESCRIBE</code> eseguita sull'endpoint pubblico <strong>DBpedia</strong>
+        recupera dal web le risorse ad essa collegate e ne costruisce un <em>nuovo
+        grafo</em>. Il vocabolario <strong>schema.org</strong> classifica l'entità
+        (<code>schema:Library</code>, <code>schema:Organization</code>…) e la collega alle
+        risorse che parlano di esso: pagina Wikipedia, sito ufficiale, immagini, categorie.
+        Il grafo non si ferma all'entità specifica: <strong>astrae i concetti generali</strong>
+        che la inquadrano (es. una biblioteca → il concetto <em>Library</em>) e i concetti
+        ad essi correlati (es. <em>Book</em>), tenuti vicini alla risorsa principale da una
+        condizione di correlazione e da un <code>LIMIT</code>. Cerca un monumento.
+      </p>
+
+      <section class="picker">
+        <label for="describe-input">Cerca un monumento o istituto culturale</label>
+        <div class="search-box">
+          <span class="search-icon" aria-hidden="true">🔍</span>
+          <input type="text" id="describe-input" autocomplete="off" role="combobox"
+                 aria-autocomplete="list" aria-expanded="false" aria-controls="describe-suggestions"
+                 placeholder="Inizia a digitare il nome…">
+          <ul id="describe-suggestions" class="suggestions hidden" role="listbox"></ul>
+        </div>
+      </section>
+
+      <p id="dsc-status" class="hint"></p>
+
+      <div id="dsc-result" class="hidden">
+        <p>
+          Risorsa su DBpedia: <a id="dsc-resource" href="#" target="_blank" rel="noopener"></a>
+        </p>
+
+        <div id="dsc-types-wrap">
+          <h4>Classificazione schema.org</h4>
+          <div id="dsc-types" class="schema-types"></div>
+        </div>
+
+        <h4>Grafo delle risorse collegate</h4>
+        <p class="hint">
+          Il monumento (al centro) collegato, tramite la risorsa DBpedia, alle risorse
+          trovate sul web. Trascina i nodi per riorganizzarli, oppure clicca su una
+          risorsa collegata per aprirne la pagina web in una nuova scheda.
+        </p>
+        <div id="dsc-graph" class="onto-graph monument-graph"></div>
+
+        <details class="card card-collapsible" id="dsc-turtle-details">
+          <summary><h3>Nuovo grafo RDF generato (Turtle)</h3></summary>
+          <div class="card-body">
+            <pre id="dsc-turtle" class="rdf-output"></pre>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<dialog id="lightbox">
+  <img id="lightbox-img" alt="">
+  <button id="lightbox-close">×</button>
+</dialog>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
